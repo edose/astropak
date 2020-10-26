@@ -5,6 +5,7 @@ from math import sqrt
 
 # External packages:
 import pytest
+import numpy as np
 import pandas as pd
 
 # TARGET TEST MODULE:
@@ -12,8 +13,6 @@ from astropak import stats
 
 
 def test_class_mixed_model_fit():
-    import numpy as np
-    import pandas as pd
     # First, construct test data frame:
     points = 80
     np.random.seed(1234)
@@ -29,7 +28,7 @@ def test_class_mixed_model_fit():
     df.index = df.index + 200
     # Split test data into model and test blocks:
     df_model = df[0:int(3*points/4)]
-    df_test = df[len(df_model):]
+    # df_test = df[len(df_model):]
 
     # Construct fit object:
     fit = stats.MixedModelFit(df_model, dep_var='Dep', fixed_vars=['A', 'B', 'C'], group_var='Ran')
@@ -84,6 +83,45 @@ def test_class_mixed_model_fit():
                                             index=predictions_without.index)
     expected_predictions = predictions_with_1 - random_effect_contributions
     assert list(expected_predictions) == pytest.approx(list(predictions_without))
+
+
+def test_class_linear_fit():
+    # First, construct test data frame:
+    points = 80
+    np.random.seed(1234)
+    d = {'A': np.random.randn(points),
+         'B': np.random.randn(points),
+         'C': np.random.randn(points),
+         'Dep': 0}
+    df_model = pd.DataFrame(d)
+    df_model['Dep'] = 13 + 1.5*df_model.A + 2*df_model.B + 4*df_model.C + 1*np.random.randn(len(df_model))
+
+    # Run regression, yielding the fit object:
+    fit = stats.LinearFit(df_model, dep_var='Dep', indep_vars=['A', 'B', 'C'])
+
+    # Test object and scalar attributes:
+    assert isinstance(fit, stats.LinearFit)
+    assert fit.nobs == len(df_model)
+    assert fit.indep_vars == ['A', 'B', 'C']
+    assert fit.dep_var == 'Dep'
+    assert fit.sigma == pytest.approx(0.922577)
+    assert fit.r2 == pytest.approx(0.960727)
+
+    # Test indep vars dataframe:
+    assert list(fit.df_indep_vars.index) == ['Intercept', 'A', 'B', 'C']
+    expected_values = [13.05941, 1.37586, 1.98450, 4.00373]
+    assert all([val == pytest.approx(exp_val, abs=0.00002)
+                for (val, exp_val) in zip(fit.df_indep_vars['Value'], expected_values)])
+    expected_std_devs = [0.10775, 0.10996, 0.10675, 0.10997]
+    assert all([std_dev == pytest.approx(exp_std_dev, abs=0.00002)
+                for (std_dev, exp_std_dev) in zip(fit.df_indep_vars['Stdev'], expected_std_devs)])
+
+    # Test observation dataframe:
+    assert len(fit.df_observations) == fit.nobs
+    assert fit.df_observations.loc[0, 'FittedValue'] == pytest.approx(16.7787, abs=0.0002)
+    assert fit.df_observations.loc[78, 'FittedValue'] == pytest.approx(13.7680, abs=0.0002)
+    assert fit.df_observations.loc[1, 'Residual'] == pytest.approx(+0.24075, abs=0.0002)
+    assert fit.df_observations.loc[79, 'Residual'] == pytest.approx(-1.07459, abs=0.0002)
 
 
 def test_weighted_mean():

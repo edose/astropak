@@ -276,7 +276,6 @@ def ra_as_hours(ra_degrees, seconds_decimal_places=2):
     :param seconds_decimal_places: number of places at end of RA string (no period if zero). [int]
     :return: RA in hours/hex format. [string, or None if outside RA range]
     """
-    # TODO: Make the decimal places happen (as in degrees_as_hex(), below).
     if (ra_degrees < 0) | (ra_degrees > 360):
         return None
     seconds_decimal_places = int(max(0, seconds_decimal_places))  # ensure int and non-negative.

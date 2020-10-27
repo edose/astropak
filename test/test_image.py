@@ -8,11 +8,14 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 import pytest
 
+# Other astropak modules:
+from astropak.util import RaDec, dec_as_degrees, ra_as_degrees
+
 # TARGET TEST MODULE:
 from astropak import image
 
-PHOTRIX_ROOT_DIRECTORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEST_TOP_DIRECTORY = os.path.join(PHOTRIX_ROOT_DIRECTORY, "test")
+THIS_PACKAGE_ROOT_DIRECTORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEST_TOP_DIRECTORY = os.path.join(THIS_PACKAGE_ROOT_DIRECTORY, "test")
 
 
 def test_class_fits():
@@ -26,14 +29,19 @@ def test_class_fits():
     fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename='dummy.txt')
     assert fits.is_valid is False
 
-    # Open FITS file with known extension:
-    given_filename = 'CE Aur-0001-V.fts'
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory,
-                      filename=given_filename)
+    # Open FITS file with no calibration (at least not by MaxIm 5/6) and no plate solution:
+    given_filename = 'AD Dra-S001-R001-C001-I.fts'
+    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename=given_filename)
     assert fits.is_valid
+    assert fits.is_calibrated is False
+    assert fits.is_plate_solved is False
+
+    # Test constructor from path in pieces, known extension:
+    given_filename = 'CE Aur-0001-V.fts'
+    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename=given_filename)
+    assert fits.is_valid
+    # Verify fields:
     assert fits.fullpath == os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename)
-    assert fits.header_has_key('NAXIS')
-    assert not fits.header_has_key('XXX')
     assert fits.object == 'CE Aur'
     assert fits.is_calibrated
     assert fits.is_plate_solved
@@ -55,30 +63,74 @@ def test_class_fits():
     assert fits.plate_solution['CRVAL1'] == pytest.approx(1.03834010522E+002)
     assert fits.ra == pytest.approx(103.83791666666667)
     assert fits.dec == pytest.approx(46.28638888888889)
-
-    # Test .image (== .image_xy):
+    # Verify field .image (== .image_xy):
     assert fits.image.shape == (3072, 2047)  # *image* (x,y), which is *array* (n_rows, n_columns)
     assert fits.image[0, 0] == 275  # upper-left corner
     assert fits.image[0, 2046] == 180  # lower-left corner
     assert fits.image[3071, 2046] == 265  # lower-right corner
     assert fits.image[3071, 0] == 285  # upper-right corner
+    # Test methods:
+    assert fits.header_has_key('NAXIS')
+    assert not fits.header_has_key('NOT A KEY')
+    assert fits.header_value('NAXIS1') == 3072  # int
+    assert fits.header_value('EXPOSURE') == pytest.approx(587.0)  # float
+    assert fits.header_value('OBJECT').strip() == 'CE Aur'
+    radec = RaDec('06:56:12.8', '+46:32:08.9')
+    x, y = fits.xy_from_radec(radec)
+    assert x == pytest.approx(2826, 0.5)  # according to WCS terms only.
+    assert y == pytest.approx(218, 0.5)   # "
+    radec = fits.radec_from_xy(846, 932)
+    assert radec.ra == pytest.approx(ra_as_degrees('06:55:26.58'), 0.001)
+    assert radec.dec == pytest.approx(dec_as_degrees('46:09:25.6'), 0.001)
+    ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max = fits.bounding_ra_dec(extension_percent=2)
+    assert ra_deg_min == pytest.approx(103.5359646, abs=0.001)
+    assert ra_deg_max == pytest.approx(104.1320565, abs=0.001)
+    assert dec_deg_min == pytest.approx(45.9816651, abs=0.001)
+    assert dec_deg_max == pytest.approx(46.5946668, abs=0.001)
 
-    # Open FITS file without known FITS extension (which FITS constructor must first find):
-    given_filename = 'CE Aur-0001-V'
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test',
-                      filename=given_filename)
+    # Test constructor when giving only 2 path items:
+    given_filename = 'CE Aur-0001-V.fts'
+    this_directory = os.path.join(TEST_TOP_DIRECTORY, test_rel_directory)
+    fits = image.FITS(this_directory, given_filename)
     assert fits.is_valid
-    assert fits.fullpath == os.path.join(TEST_TOP_DIRECTORY, test_rel_directory,
-                                         given_filename +'.fts')
+    assert fits.fullpath == os.path.join(this_directory, given_filename)
+    assert fits.ra == pytest.approx(103.83791666666667)
+    assert fits.dec == pytest.approx(46.28638888888889)
+
+    # Test constructor when giving only fullpath:
+    given_filename = 'CE Aur-0001-V.fts'
+    fullpath = os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename)
+    fits = image.FITS(fullpath)
+    assert fits.is_valid
+    assert fits.fullpath == os.path.join(this_directory, given_filename)
+    assert fits.ra == pytest.approx(103.83791666666667)
+    assert fits.dec == pytest.approx(46.28638888888889)
+
+    # Open FITS file without known FITS extension (which FITS constructor itself must determine):
+    given_filename = 'CE Aur-0001-V'
+    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename=given_filename)
+    assert fits.is_valid
+    assert fits.fullpath == os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename +'.fts')
     assert fits.object == 'CE Aur'
     assert fits.airmass == pytest.approx(1.5263, abs=0.0001)
 
-    # Open FITS file with no calibration (at least not by MaxIm 5/6) and no plate solution:
-    given_filename = 'AD Dra-S001-R001-C001-I.fts'
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename=given_filename)
+    # Test parm pixel_scale_multiplier:
+    pixel_scale_multiplier = 0.68198 / 0.68618  # reasonable value, = pxscale(WCS) / pxscale(PinPoint).
+    given_filename = 'CE Aur-0001-V.fts'
+    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename=given_filename,
+                      pixel_scale_multiplier=pixel_scale_multiplier)
     assert fits.is_valid
-    assert fits.is_calibrated is False
-    assert fits.is_plate_solved is False
+    assert fits.plate_solution['CD1_1'] == pytest.approx(-1.92303985969E-006 * pixel_scale_multiplier)
+    assert fits.plate_solution['CD1_1'] != pytest.approx(-1.92303985969E-006)
+    assert fits.plate_solution['CD2_1'] == pytest.approx(1.90588522664E-004 * pixel_scale_multiplier)
+    assert fits.plate_solution['CRVAL1'] == pytest.approx(1.03834010522E+002)  # unchanged
+    radec = RaDec('06:56:12.8', '+46:32:08.9')
+    x, y = fits.xy_from_radec(radec)
+    assert x == pytest.approx(2834, 0.5)  # according to WCS terms only.
+    assert y == pytest.approx(213, 0.5)   # "
+    radec = fits.radec_from_xy(846, 932)
+    assert radec.ra == pytest.approx(ra_as_degrees('06:55:26.58'), abs=0.001)
+    assert radec.dec == pytest.approx(dec_as_degrees('46:09:25.6'), abs=0.001)
 
 
 def test_class_image():
@@ -160,7 +212,7 @@ def test_class_image():
 
 
 def test_fits__xy_from_radec():
-    from photrix.util import RaDec
+    from astropak.util import RaDec
     fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test',
                       filename='CE Aur-0001-V.fts')
     # All tests lack distortion corrections (as none available in FITS header),

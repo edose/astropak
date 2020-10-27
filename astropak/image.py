@@ -18,7 +18,7 @@ import astropy.io.fits
 from dateutil.parser import parse
 
 # EVD modules:
-from .util import ra_as_degrees, dec_as_degrees
+from .util import ra_as_degrees, dec_as_degrees, RaDec
 
 TOP_DIRECTORY = 'C:/Astro/Images/Borea Photrix'
 # FITS_REGEX_PATTERN = '^(.+)\.(f[A-Za-z]{2,3})$'
@@ -28,6 +28,7 @@ ISO_8601_FORMAT = '%Y-%m-%dT%H:%M:%S'
 FWHM_PER_SIGMA = 2.0 * sqrt(2.0 * log(2))
 SUBIMAGE_MARGIN = 1.5  # subimage pixels around outer annulus, for safety
 RADIANS_PER_DEGREE = pi / 180.0
+DEGREES_PER_RADIAN = 180.0 / pi
 
 # R_DISC altered 10 -> 9 Aug 16 2019 for new L-500 mount.
 R_DISC = 9  # for aperture photometry, likely to be adaptive (per image) later.
@@ -38,11 +39,10 @@ R_OUTER = 20  # "
 class Image:
     """
     Holds an astronomical image and apertures for photometric processing.
-    Contains a FITS object, but doesn't know of its implementation and doesn't change it.
+    Contains a FITS object, but doesn't know of its implementation and doesn't alter it.
     """
     def __init__(self, fits_object):
-        """
-        Main constructor when FITS object is already available.
+        """  Main constructor when FITS object is already available.
         :param fits_object: an object of the FITS class (this module).
         """
         self.fits = fits_object
@@ -57,12 +57,16 @@ class Image:
 
     @classmethod
     def from_fullpath(cls, fullpath):
-        this_fits = FITS()
+        """ Alternate constructor when FITS-file fullpath is available but not the FITS object itself.
+            Will load FITS object and call regular constructor.
+        """
+        this_fits = FITS(fullpath)
+        return Image(this_fits)
 
     @classmethod
     def from_fits_path(cls, top_directory=TOP_DIRECTORY, rel_directory=None, filename=None):
-        """
-        Alternate constructor that starts by fetching the FITS object via its given filename.
+        """ Alternate constructor that starts by fetching the FITS object via its given filename.
+            Will load FITS object and call regular constructor.
         """
         this_fits = FITS(top_directory, rel_directory, filename)
         return Image(this_fits)
@@ -353,21 +357,31 @@ class Aperture:
 
 
 class FITS:
-    """
-    Holds data from a FITS file. Immutable. Used mostly by an Image object (class Image).
+    """ Holds data from a FITS file. Immutable. Used mostly by an Image object (class Image).
+        Internally, ALL image data & coordinates are held as zero-based (y,x) arrays (python, first
+            coordinate is y, second is x), and NOT as FITS which are (x,y), origin=1
+        TESTS OK 2020-10-26.
     Usage: obj = FITS('C:/Astro', 'Borea', 'xxx.fts')  # 3 parts of full path.
     Usage: obj = FITS('C:/Astro/Borea/', 'xxx.fts')    # 2 parts of full path.
     Usage: obj = FITS('C:/Astro/Borea/xxx.fts')        # full path already available.
     """
-    def __init__(self, top_directory, rel_directory='', filename=''):
+    def __init__(self, top_directory, rel_directory=None, filename=None, pixel_scale_multiplier=1):
         """
         :param top_directory:
         :param rel_directory:
         :param filename:
+        :param pixel_scale_multiplier: value (prob. near 1) by which to multiply pixel scale. Typically
+            needed whenever the FITS-file plate solution has distortion parameters so that the WCS values
+            are not what they would be for a WCS-only solution; that is, whenever the zero-order solution
+            is called a proper WCS but cannot be directly used as one, nor even correctable with the
+            distortion parameters (looking at you, PinPoint).
         """
         # If filename has FITS extension already, use it:
         actual_fits_fullpath = None
-        test_fullpath = os.path.join(top_directory, rel_directory, filename)
+        test_fullpath = top_directory
+        for more in [rel_directory, filename]:
+            if more is not None:
+                test_fullpath = os.path.join(test_fullpath, more)
         if os.path.exists(test_fullpath):
             actual_fits_fullpath = test_fullpath
 
@@ -418,7 +432,7 @@ class FITS:
         self.guide_exposure = self.header_value('TRAKTIME')  # seconds
         self.fwhm = self.header_value('FWHM')  # pixels
 
-        self.plate_solution = self._get_plate_solution()  # a pd.Series
+        self.plate_solution = self._get_plate_solution(pixel_scale_multiplier)  # a pd.Series
         self.is_plate_solved = not any(self.plate_solution.isnull())
         self.ra = ra_as_degrees(self.header_value(['RA', 'OBJCTRA']))
         self.dec = dec_as_degrees(self.header_value(['DEC', 'OBJCTDEC']))
@@ -428,8 +442,12 @@ class FITS:
         #                     for x in [self.object, self.exposure, self.filter,
         #                               self.airmass, self.utc_start, self.focal_length])
 
+    def header_has_key(self, key):
+        """ Return True iff key is in FITS header. No validation of value."""
+        return key in self.header
+
     def header_value(self, key):
-        """
+        """ Return value associated with given FITS header key.
         :param key: FITS header key [string] or list of keys to try [list of strings]
         :return: value of FITS header entry, typically [float] if possible, else [string]
         """
@@ -441,23 +459,19 @@ class FITS:
                 return value
         return None
 
-    def header_has_key(self, key):
-        return key in self.header
-
     def xy_from_radec(self, radec):
-        """
-        Computes zero-based pixel x and y for a given RA and Dec sky coordinate.
+        """ Computes zero-based (python, not FITS) x and y for a given RA and Dec sky coordinate.
             May be outside image's actual boundaries.
             Assumes flat image (no distortion, i.e., pure Tan projection).
-        :param radec: sky coordinates [RaDec class object]
+        :param radec: sky coordinates. [RaDec object]
         :return: x and y pixel position, zero-based, in this FITS image [2-tuple of floats]
         """
-        cd11 = self.plate_solution['CD1_1']
-        cd12 = self.plate_solution['CD1_2']
-        cd21 = self.plate_solution['CD2_1']
-        cd22 = self.plate_solution['CD2_2']
-        crval1 = self.plate_solution['CRVAL1']
-        crval2 = self.plate_solution['CRVAL2']
+        cd11 = self.plate_solution['CD1_1']  # d(RA)/dx, deg/px
+        cd12 = self.plate_solution['CD1_2']  # d(RA)/dy, deg/px
+        cd21 = self.plate_solution['CD2_1']  # d(Dec)/dx, deg/px
+        cd22 = self.plate_solution['CD2_2']  # d(Dec)/dy, deg/px
+        crval1 = self.plate_solution['CRVAL1']  # center RA in degrees
+        crval2 = self.plate_solution['CRVAL2']  # center Dec in degrees
         crpix1 = self.plate_solution['CRPIX1']  # 1 at edge (FITS convention)
         crpix2 = self.plate_solution['CRPIX2']  # "
 
@@ -473,24 +487,62 @@ class FITS:
         return x - 1, y - 1  # FITS image origin=(1,1), but our (MaxIm/python) convention=(0,0)
 
     def radec_from_xy(self, x, y):
-        pass
-    #     """
-    #     Computes RA and Dec for a give x and y pixel count. Assumes flat image (no distortion,
-    #         i.e., pure Tan projection).
-    #     :param x: pixel position in x [float]
-    #     :param y: pixel position in y [float]
-    #     :return: RA and Dec [RaDec object]
-    #     """
-    #     cd11 = self.plate_solution['CD1_1']
-    #     cd12 = self.plate_solution['CD1_2']
-    #     cd21 = self.plate_solution['CD2_1']
-    #     cd22 = self.plate_solution['CD2_2']
-    #     crval1 = self.plate_solution['CRVAL1']
-    #     crval2 = self.plate_solution['CRVAL2']
-    #     crpix1 = self.plate_solution['CRPIX1']
-    #     crpix2 = self.plate_solution['CRPIX2']
-    #     # Do the calculation (inverse of self.xy_from_radec(self, radec)):
-    #     return RaDec(0, 0)
+        """ Calculate RA, Dec for given (x,y) pixel position in this image. Uses WCS (linear) plate soln.
+        :param x: pixel position in X. [float}
+        :param y: pixel position in Y. [float]
+        :return: RA,Dec sky position for given pixel position. [RaDec object]
+        """
+        ps = self.plate_solution
+        # TODO: center pixel should probably be read directly from plate solution.
+        dx = x - self.image.shape[0] / 2.0
+        dy = y - self.image.shape[1] / 2.0
+        d_east_west = (dx * ps['CD1_1'] + dy * ps['CD1_2'])
+        d_ra = d_east_west / cos(ps['CRVAL2'] / DEGREES_PER_RADIAN)
+        d_dec = (dx * ps['CD2_1'] + dy * ps['CD2_2'])
+        ra = ps['CRVAL1'] + d_ra
+        dec = ps['CRVAL2'] + d_dec
+        return RaDec(ra, dec)
+
+    def bounding_ra_dec(self, extension_percent=3):
+        """ Returns bounding RA and Dec that will completely cover this plate-solved FITS image.
+        :param extension_percent: to extend bounding box by x% beyond actual edges, enter x. [float]
+        :return: min RA, max RA, min Dec, max Dec, all in degrees. [4-tuple of floats]
+        """
+        image = self.image_fits
+        xsize, ysize = image.shape[1], image.shape[0]
+        ps = self.plate_solution  # a pandas Series
+        ra_list, dec_list = [], []
+        extension_fraction = extension_percent / 100.0
+        for x in [-extension_fraction * xsize, (1 + extension_fraction) * xsize]:
+            for y in [-extension_fraction * ysize, (1 + extension_fraction) * ysize]:
+                radec = self.radec_from_xy(x, y)
+                ra_list.append(radec.ra)
+                dec_list.append(radec.dec)
+        ra_deg_min = min(ra_list) % 360.0
+        ra_deg_max = max(ra_list) % 360.0
+        dec_deg_min = min(dec_list)
+        dec_deg_max = max(dec_list)
+        return ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max
+
+    # def bounding_ra_dec_obsolete(self):
+    #     # image = Image(fits_object)
+    #     image = self.image_fits
+    #     ps = self.plate_solution  # a pandas Series
+    #     ra_list, dec_list = [], []
+    #     for xfract in [-0.5, 0.5]:
+    #         dx = xfract * image.xsize
+    #         for yfract in [-0.5, 0.5]:
+    #             dy = yfract * image.ysize
+    #             d_east_west = 1.03 * (dx * ps['CD1_1'] + dy * ps['CD1_2'])  # in degrees
+    #             d_ra = d_east_west / cos(ps['CRVAL2'] / DEGREES_PER_RADIAN)  # "
+    #             d_dec = 1.03 * (dx * ps['CD2_1'] + dy * ps['CD2_2'])  # "
+    #             ra_list.append(ps['CRVAL1'] + d_ra)
+    #             dec_list.append(ps['CRVAL2'] + d_dec)
+    #     ra_deg_min = min(ra_list) % 360.0
+    #     ra_deg_max = max(ra_list) % 360.0
+    #     dec_deg_min = min(dec_list)
+    #     dec_deg_max = max(dec_list)
+    #     return ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max
 
     def _is_calibrated(self):
         calib_fn_list = [self._is_calibrated_by_maxim_5_6()]  # may add more fns when available.
@@ -524,7 +576,15 @@ class FITS:
         utc_dt = parse(utc_string).replace(tzinfo=timezone.utc)
         return utc_dt
 
-    def _get_plate_solution(self):
+    def _get_plate_solution(self, pixel_scale_multiplier=1):
+        """ Get plate solution's (WCS) 8 values, then apply pixel scale multipler to correct if needed.
+        :param pixel_scale_multiplier: value (prob. near 1) by which to multiply pixel scale. Typically
+            needed whenever the FITS-file plate solution has distortion parameters so that the WCS values
+            are not what they would be for a WCS-only solution; that is, whenever the zero-order solution
+            is called a proper WCS but cannot be directly used as one, nor even correctable with the
+            distortion parameters (looking at you, PinPoint).
+        :return: the 8 WCS values. [dict of 8 string:float items]
+        """
         plate_solution_index = ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2',
                                 'CRVAL1', 'CRVAL2', 'CRPIX1', 'CRPIX2']
         plate_solution_values = [np.float64(self.header_value(key))
@@ -548,6 +608,8 @@ class FITS:
             if self.header_value('CDELT2') is not None and self.header_value('CROTA2') is not None:
                 solution['CD2_2'] = self.header_value('CDELT2') * \
                                     cos(self.header_value('CROTA2') * RADIANS_PER_DEGREE)
+        for key in ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2']:
+            solution[key] *= pixel_scale_multiplier
         return solution
 
 

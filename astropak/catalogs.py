@@ -84,7 +84,7 @@ class Refcat2:
 
     @classmethod
     def from_fits_object(cls, fits_object):
-        ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max = get_bounding_ra_dec(fits_object)
+        ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max = fits_object.bounding_ra_dec()
         return cls((ra_deg_min, ra_deg_max), (dec_deg_min, dec_deg_max), sort_ra=True)
 
     @classmethod
@@ -231,24 +231,24 @@ def find_matching_comp(df_comps, ra_deg, dec_deg, tolerance_arcseconds=MATCH_TOL
         return df_sub.index.values[i]
 
 
-def get_bounding_ra_dec(fits_object):
-    # TODO: Move this to image.py::FITS class. (It concerns FITS images than catalogs.)
-    image = Image(fits_object)
-    ps = fits_object.plate_solution  # a pandas Series
-    ra_list, dec_list = [], []
-    for xfract in [-0.5, 0.5]:
-        dx = xfract * image.xsize
-        for yfract in [-0.5, 0.5]:
-            dy = yfract * image.ysize
-            d_east_west = 1.03 * (dx * ps['CD1_1'] + dy * ps['CD1_2'])  # in degrees
-            d_ra = d_east_west / cos(ps['CRVAL2'] / DEGREES_PER_RADIAN)      # "
-            d_dec = 1.03 * (dx * ps['CD2_1'] + dy * ps['CD2_2'])        # "
-            ra_list.append(ps['CRVAL1'] + d_ra)
-            dec_list.append(ps['CRVAL2'] + d_dec)
-    ra_deg_min = min(ra_list) % 360.0
-    ra_deg_max = max(ra_list) % 360.0
-    dec_deg_min = min(dec_list)
-    dec_deg_max = max(dec_list)
-    return ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max
+# def get_bounding_ra_dec(fits_object):
+#     # TODO: Move this to image.py::FITS class. (It concerns FITS images than catalogs.)
+#     image = Image(fits_object)
+#     ps = fits_object.plate_solution  # a pandas Series
+#     ra_list, dec_list = [], []
+#     for xfract in [-0.5, 0.5]:
+#         dx = xfract * image.xsize
+#         for yfract in [-0.5, 0.5]:
+#             dy = yfract * image.ysize
+#             d_east_west = 1.03 * (dx * ps['CD1_1'] + dy * ps['CD1_2'])  # in degrees
+#             d_ra = d_east_west / cos(ps['CRVAL2'] / DEGREES_PER_RADIAN)      # "
+#             d_dec = 1.03 * (dx * ps['CD2_1'] + dy * ps['CD2_2'])        # "
+#             ra_list.append(ps['CRVAL1'] + d_ra)
+#             dec_list.append(ps['CRVAL2'] + d_dec)
+#     ra_deg_min = min(ra_list) % 360.0
+#     ra_deg_max = max(ra_list) % 360.0
+#     dec_deg_min = min(dec_list)
+#     dec_deg_max = max(dec_list)
+#     return ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max
 
 

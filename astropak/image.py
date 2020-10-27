@@ -365,16 +365,18 @@ class FITS:
     Usage: obj = FITS('C:/Astro/Borea/', 'xxx.fts')    # 2 parts of full path.
     Usage: obj = FITS('C:/Astro/Borea/xxx.fts')        # full path already available.
     """
-    def __init__(self, top_directory, rel_directory=None, filename=None, pixel_scale_multiplier=1):
+    def __init__(self, top_directory, rel_directory=None, filename=None,
+                 pinpoint_pixel_scale_multiplier=1):
         """
         :param top_directory:
         :param rel_directory:
         :param filename:
-        :param pixel_scale_multiplier: value (prob. near 1) by which to multiply pixel scale. Typically
-            needed whenever the FITS-file plate solution has distortion parameters so that the WCS values
-            are not what they would be for a WCS-only solution; that is, whenever the zero-order solution
-            is called a proper WCS but cannot be directly used as one, nor even correctable with the
-            distortion parameters (looking at you, PinPoint).
+        :param pinpoint_pixel_scale_multiplier: value (prob. near 1) by which to multiply pixel scale
+            IFF pinpoint plate solution is detected. The best solution I can devise for the PinPoint mess.
+            Required because (sigh) Pinpoint plate solutions include "private" distortion parameters
+            so that their WCS values are not what they would be & should be for a WCS-only solution.
+            That is, the zero-order solution is *called* a proper WCS but is not, and it cannot be
+            used as one, nor even correctable with its "private" distortion parameters.
         """
         # If filename has FITS extension already, use it:
         actual_fits_fullpath = None
@@ -406,7 +408,9 @@ class FITS:
             self.is_valid = False
             return
 
-        self.header = hdulist[0].header
+        self.header = hdulist[0].header.copy()
+        self.header_keys = [key for key in self.header.keys()]      # save generator results as a list.
+        self.header_items = [item for item in self.header.items()]  # save generator results as a list.
         # FITS convention = (vert/Y, horiz/X), pixel (1,1) at bottom left -- NOT USED by photrix.
         # MaxIm/Astrometrica convention = (horiz/X, vert/Y) pixel (0,0 at top left). USE THIS.
         # NB: self.image_fits, self.image_xy, and self.image are different views of the SAME array.
@@ -419,7 +423,6 @@ class FITS:
         self.top_directory = top_directory
         self.rel_directory = rel_directory
         self.filename = filename
-        self.all_header_keys = self.header.keys()
         self.object = self.header_value('OBJECT')
         self.is_calibrated = self._is_calibrated()
         self.focal_length = self._get_focal_length()
@@ -432,7 +435,10 @@ class FITS:
         self.guide_exposure = self.header_value('TRAKTIME')  # seconds
         self.fwhm = self.header_value('FWHM')  # pixels
 
-        self.plate_solution = self._get_plate_solution(pixel_scale_multiplier)  # a pd.Series
+        # self.plate_solution_is_pinpoint is needed before running .get_plate_solution().
+        self.plate_solution_is_pinpoint = all([key in self.header_keys
+                                               for key in ['TR1_0', 'TR2_1', 'TR1_6', 'TR2_5']])
+        self.plate_solution = self._get_plate_solution(pinpoint_pixel_scale_multiplier)  # a pd.Series
         self.is_plate_solved = not any(self.plate_solution.isnull())
         self.ra = ra_as_degrees(self.header_value(['RA', 'OBJCTRA']))
         self.dec = dec_as_degrees(self.header_value(['DEC', 'OBJCTDEC']))
@@ -576,13 +582,14 @@ class FITS:
         utc_dt = parse(utc_string).replace(tzinfo=timezone.utc)
         return utc_dt
 
-    def _get_plate_solution(self, pixel_scale_multiplier=1):
+    def _get_plate_solution(self, pinpoint_pixel_scale_multiplier=1):
         """ Get plate solution's (WCS) 8 values, then apply pixel scale multipler to correct if needed.
-        :param pixel_scale_multiplier: value (prob. near 1) by which to multiply pixel scale. Typically
-            needed whenever the FITS-file plate solution has distortion parameters so that the WCS values
-            are not what they would be for a WCS-only solution; that is, whenever the zero-order solution
-            is called a proper WCS but cannot be directly used as one, nor even correctable with the
-            distortion parameters (looking at you, PinPoint).
+        :param pinpoint_pixel_scale_multiplier: value (prob. near 1) by which to multiply pixel scale
+            IFF pinpoint plate solution is detected. The best solution I can devise for the PinPoint mess.
+            Required because (sigh) Pinpoint plate solutions include "private" distortion parameters
+            so that their WCS values are not what they would be & should be for a WCS-only solution.
+            That is, the zero-order solution is *called* a proper WCS but is not, and it cannot be
+            used as one, nor even correctable with its "private" distortion parameters.
         :return: the 8 WCS values. [dict of 8 string:float items]
         """
         plate_solution_index = ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2',
@@ -608,8 +615,9 @@ class FITS:
             if self.header_value('CDELT2') is not None and self.header_value('CROTA2') is not None:
                 solution['CD2_2'] = self.header_value('CDELT2') * \
                                     cos(self.header_value('CROTA2') * RADIANS_PER_DEGREE)
-        for key in ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2']:
-            solution[key] *= pixel_scale_multiplier
+        if self.plate_solution_is_pinpoint:
+            for key in ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2']:
+                solution[key] *= pinpoint_pixel_scale_multiplier
         return solution
 
 

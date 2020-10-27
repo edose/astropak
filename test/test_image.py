@@ -35,6 +35,7 @@ def test_class_fits():
     assert fits.is_valid
     assert fits.is_calibrated is False
     assert fits.is_plate_solved is False
+    assert fits.plate_solution_is_pinpoint is False
 
     # Test constructor from path in pieces, known extension:
     given_filename = 'CE Aur-0001-V.fts'
@@ -45,6 +46,7 @@ def test_class_fits():
     assert fits.object == 'CE Aur'
     assert fits.is_calibrated
     assert fits.is_plate_solved
+    assert fits.plate_solution_is_pinpoint
     assert fits.focal_length == pytest.approx(2702, abs=1)
     assert fits.exposure == pytest.approx(587, abs=1)
     assert fits.temperature == pytest.approx(-35, abs=0.1)
@@ -114,15 +116,18 @@ def test_class_fits():
     assert fits.object == 'CE Aur'
     assert fits.airmass == pytest.approx(1.5263, abs=0.0001)
 
-    # Test parm pixel_scale_multiplier:
-    pixel_scale_multiplier = 0.68198 / 0.68618  # reasonable value, = pxscale(WCS) / pxscale(PinPoint).
+    # Test parm pinpoint_pixel_scale_multiplier:
+    pinpoint_pixel_scale_multiplier = 0.68198 / 0.68618  # = pxscale(WCS) / pxscale(PinPoint).
     given_filename = 'CE Aur-0001-V.fts'
     fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename=given_filename,
-                      pixel_scale_multiplier=pixel_scale_multiplier)
+                      pinpoint_pixel_scale_multiplier=pinpoint_pixel_scale_multiplier)
     assert fits.is_valid
-    assert fits.plate_solution['CD1_1'] == pytest.approx(-1.92303985969E-006 * pixel_scale_multiplier)
+    assert fits.plate_solution_is_pinpoint
+    assert fits.plate_solution['CD1_1'] == pytest.approx(-1.92303985969E-006 *
+                                                         pinpoint_pixel_scale_multiplier)
     assert fits.plate_solution['CD1_1'] != pytest.approx(-1.92303985969E-006)
-    assert fits.plate_solution['CD2_1'] == pytest.approx(1.90588522664E-004 * pixel_scale_multiplier)
+    assert fits.plate_solution['CD2_1'] == pytest.approx(1.90588522664E-004 *
+                                                         pinpoint_pixel_scale_multiplier)
     assert fits.plate_solution['CRVAL1'] == pytest.approx(1.03834010522E+002)  # unchanged
     radec = RaDec('06:56:12.8', '+46:32:08.9')
     x, y = fits.xy_from_radec(radec)

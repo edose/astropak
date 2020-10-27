@@ -16,8 +16,6 @@ import math
 import ephem  # TODO: remove ephem dependency, in favor of astroplan.
 
 
-
-
 _____CLASSES________________________________________________ = 0
 
 

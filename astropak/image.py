@@ -31,6 +31,8 @@ RADIANS_PER_DEGREE = pi / 180.0
 DEGREES_PER_RADIAN = 180.0 / pi
 
 # R_DISC altered 10 -> 9 Aug 16 2019 for new L-500 mount.
+# This is here for safety only--normally, user would pass in values derived from some .ini file
+#     with values specific to a specific photometry application.
 R_DISC = 9  # for aperture photometry, likely to be adaptive (per image) later.
 R_INNER = 15  # "
 R_OUTER = 20  # "
@@ -38,12 +40,14 @@ R_OUTER = 20  # "
 
 class Image:
     """
-    Holds an astronomical image and apertures for photometric processing.
+    Holds an astronomical image and apertures for photometric processing.  ALL TESTS OK 2020-10-27.
     Contains a FITS object, but doesn't know of its implementation and doesn't alter it.
     """
-    def __init__(self, fits_object):
+    def __init__(self, fits_object, aperture_radii_pixels=(R_DISC, R_INNER, R_OUTER)):
         """  Main constructor when FITS object is already available.
         :param fits_object: an object of the FITS class (this module).
+        :param aperture_radii_pixels: the 3 radii defining the center disc, and the inner and outer radii
+                   of the circular sky annulus around it, in pixels. [3-tuple of floats]
         """
         self.fits = fits_object
         self.top_directory = fits_object.top_directory
@@ -52,6 +56,7 @@ class Image:
         self.image = self.fits.image
         self.xsize = self.image.shape[0]
         self.ysize = self.image.shape[1]
+        self.aperture_radii_pixels = aperture_radii_pixels
         self.apertures = dict()  # initially empty dictionary of Aperture objects
         self.df_punches = pd.DataFrame()
 
@@ -160,9 +165,8 @@ class Image:
 
 
 class Aperture:
-    """
-    Used directly only by class Image. Contains everything about one aperture.
-    """
+    """ Used directly only by class Image. Contains everything about one aperture.
+       TESTS OK 2020-10-27 (tested together with class Image). """
     def __init__(self, image_obj, star_id, x0, y0, df_punches=None):
         """
         :param image_obj: Image to which this Aperture applies [Image class object]
@@ -181,9 +185,7 @@ class Aperture:
         if df_punches is not None:
             if len(df_punches) >= 1:
                 self.df_punches = df_punches.loc[df_punches['StarID'] == star_id, :]
-        self.r_disc = R_DISC
-        self.r_inner = R_INNER
-        self.r_outer = R_OUTER
+        self.r_disc, self.r_inner, self.r_outer = image_obj.aperture_radii_pixels
 
         # Aperture evaluation fields, with default (no-flux) values:
         self.n_disc_pixels, self.n_annulus_pixels = 0, 0
@@ -409,8 +411,9 @@ class FITS:
             return
 
         self.header = hdulist[0].header.copy()
-        self.header_keys = [key for key in self.header.keys()]      # save generator results as a list.
-        self.header_items = [item for item in self.header.items()]  # save generator results as a list.
+        # self.header_keys = [key for key in self.header.keys()]      # save generator results as a list.
+        # self.header_items = [item for item in self.header.items()]  # save generator results as a list.
+
         # FITS convention = (vert/Y, horiz/X), pixel (1,1) at bottom left -- NOT USED by photrix.
         # MaxIm/Astrometrica convention = (horiz/X, vert/Y) pixel (0,0 at top left). USE THIS.
         # NB: self.image_fits, self.image_xy, and self.image are different views of the SAME array.
@@ -435,8 +438,8 @@ class FITS:
         self.guide_exposure = self.header_value('TRAKTIME')  # seconds
         self.fwhm = self.header_value('FWHM')  # pixels
 
-        # self.plate_solution_is_pinpoint is needed before running .get_plate_solution().
-        self.plate_solution_is_pinpoint = all([key in self.header_keys
+        # Note: self.plate_solution_is_pinpoint is needed before running .get_plate_solution().
+        self.plate_solution_is_pinpoint = all([key in self.header.keys()
                                                for key in ['TR1_0', 'TR2_1', 'TR1_6', 'TR2_5']])
         self.plate_solution = self._get_plate_solution(pinpoint_pixel_scale_multiplier)  # a pd.Series
         self.is_plate_solved = not any(self.plate_solution.isnull())

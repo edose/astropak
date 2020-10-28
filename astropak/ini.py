@@ -6,12 +6,13 @@ import os.path
 import configparser
 from collections import OrderedDict
 
-VALID_VALUE_TYPES = ('int', 'float', 'string')
-
 
 class IniFile:
     """ Holds one .ini file's contents in easily retrievable form (like a dict). Immutable.
         Reads .ini file, stores data, delivers on demand.
+        Available value types for template:
+            int, float, string : holds value in type indicated. Multiline strings are joined by a space.
+            string list: holds string or multiline string as a *list* of strings, even if only one line.
     """
     def __init__(self, inifile_fullpath):
         """ Takes template OrderedDict and .ini file name, creates object.
@@ -32,8 +33,9 @@ class IniFile:
 
         self.ini_config.read(inifile_fullpath)
 
-        # Get template's fullpath, read template into template_config:
-        self.template_filename = self.ini_config['Ini Template']['Filename']
+        # Find and read template for this .ini file:
+        # TODO: Next line goes to exception when [Ini Template] absent--should give warning and exit.
+        self.template_filename = self.ini_config.get('Ini Template', 'Filename')
         if self.template_filename is None:
             self.warnings.append('Template filename not parsed. See top of .ini file.')
             self.is_valid = False
@@ -43,6 +45,7 @@ class IniFile:
             self.warnings.append('Template file not found. See top of .ini file.')
             self.is_valid = False
             return
+        # Now that we have template fullpath, open the template file:
         template_config = configparser.ConfigParser()
         template_config.read(self.template_fullpath)
 
@@ -94,8 +97,17 @@ class IniFile:
                 self.warnings.append('Cannot be parsed as float: ' + value)
                 self.is_valid = False
                 return
-        elif value_type in ['str', 'string']:
+        elif value_type in ['boolean', 'bool']:
+            try:
+                value_to_store = self.ini_config.getboolean(section, key)
+            except (TypeError, ValueError):
+                self.warnings.append('Cannot be parsed as boolean: ' + value)
+                self.is_valid = False
+                return
+        elif value_type in ['str', 'string', 'string list']:
             value_to_store = value.splitlines()
+            if not value_type == 'string list':
+                value_to_store = ' '.join(value_to_store)  # list -> one string
         else:
             self.warnings.append('Invalid value type \'' + value_type + '\' in template[' +
                                  section + '][' + key + '].')

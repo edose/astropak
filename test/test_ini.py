@@ -9,7 +9,6 @@ import pytest
 # TARGET TEST MODULE:
 from astropak import ini
 
-
 THIS_PACKAGE_ROOT_DIRECTORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEST_TOP_DIRECTORY = os.path.join(THIS_PACKAGE_ROOT_DIRECTORY, "test")
 
@@ -25,9 +24,11 @@ def test_class_inifile():
     assert isinstance(i.value_dict['key the first'], int)
     assert i.value_dict['key 2'] == 34.33
     assert isinstance(i.value_dict['key 2'], float)
-    assert i.value_dict['cle troisieme'] == ['this is a string, mate']
-    assert isinstance(i.value_dict['cle troisieme'][0], str)
+    assert i.value_dict['cle troisieme'] == 'this is a string, mate'
     assert i['key 2'] == i.value_dict['key 2']
+    assert i['also sprach vier'] == ['this remains a', 'multiline string']
+    assert i['to one line'] == 'multiline string, joined to one string only.'
+    assert i['how about it'] == False
     assert i['not a key'] is None
 
     # Case: ini file not found:

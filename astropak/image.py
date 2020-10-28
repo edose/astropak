@@ -533,26 +533,6 @@ class FITS:
         dec_deg_max = max(dec_list)
         return ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max
 
-    # def bounding_ra_dec_obsolete(self):
-    #     # image = Image(fits_object)
-    #     image = self.image_fits
-    #     ps = self.plate_solution  # a pandas Series
-    #     ra_list, dec_list = [], []
-    #     for xfract in [-0.5, 0.5]:
-    #         dx = xfract * image.xsize
-    #         for yfract in [-0.5, 0.5]:
-    #             dy = yfract * image.ysize
-    #             d_east_west = 1.03 * (dx * ps['CD1_1'] + dy * ps['CD1_2'])  # in degrees
-    #             d_ra = d_east_west / cos(ps['CRVAL2'] / DEGREES_PER_RADIAN)  # "
-    #             d_dec = 1.03 * (dx * ps['CD2_1'] + dy * ps['CD2_2'])  # "
-    #             ra_list.append(ps['CRVAL1'] + d_ra)
-    #             dec_list.append(ps['CRVAL2'] + d_dec)
-    #     ra_deg_min = min(ra_list) % 360.0
-    #     ra_deg_max = max(ra_list) % 360.0
-    #     dec_deg_min = min(dec_list)
-    #     dec_deg_max = max(dec_list)
-    #     return ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max
-
     def _is_calibrated(self):
         calib_fn_list = [self._is_calibrated_by_maxim_5_6()]  # may add more fns when available.
         return any([is_c for is_c in calib_fn_list])
@@ -625,12 +605,24 @@ class FITS:
 
 
 def all_fits_files(top_directory, rel_directory, validate_fits=False):
-    """
-    Return list of all FITS files in given directory_path.
+    """  Return list of all FITS files in given directory_path.
+         (Code for this exists already, somewhere.)
     :param top_directory:
     :param rel_directory:
     :param validate_fits: If True, open FITS files and include only if valid.
         If False, include filename if it appears valid without opening the FITS file.
     :return: List of all FITS files in given directory_path [list of strings]
     """
+    # TODO: write all_fits_files().
+    pass
+
+
+def bounding_box_all_fits_files(top_directory, rel_directory):
+    """ Return a RA,Dec bounding box that covers *all* FITS files in a given directory.
+        (Calls all_fits_files(), then iterates through files with FITS.bounding_ra_dec().)
+    :param top_directory:
+    :param rel_directory:
+    :return:
+    """
+    # TODO: write bounding_box_all_fits_files().
     pass

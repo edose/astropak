@@ -160,8 +160,14 @@ class Refcat2:
 
 
 def read_one_refcat2_sqdeg(directory=ATLAS_REFCAT2_DIRECTORY, ra_deg_min=None, dec_deg_min=None):
-    ra_deg_int = int(ra_deg_min)
-    dec_deg_int = int(dec_deg_min)
+    """ From ATLAS refcat2, get all stars within one square degree of sky (within one catalog file).
+    :param directory: path to ATLAS refcat2 catalog.
+    :param ra_deg_min: lowest RA of square degree needed. [int, or float which will be rounded down]
+    :param dec_deg_min:lowest Dec of square degree needed. [int, or float which will be rounded down]
+    :return: dataframe of catalog contents, one row per star. [pandas Dataframe]
+    """
+    ra_deg_int = int(ra_deg_min)    # floor effect (rounds down).
+    dec_deg_int = int(dec_deg_min)  # "
     filename = '{:03d}'.format(ra_deg_int) + '{:+03d}'.format(dec_deg_int) + '.rc2'
     fullpath = os.path.join(directory, filename)
     df = pd.read_csv(fullpath, sep=',', engine='python', header=None,
@@ -229,26 +235,4 @@ def find_matching_comp(df_comps, ra_deg, dec_deg, tolerance_arcseconds=MATCH_TOL
         dist2 = [ra2 + dec2 for (ra2, dec2) in zip(dist2_ra, dist2_dec)]
         i = dist2.index(min(dist2))
         return df_sub.index.values[i]
-
-
-# def get_bounding_ra_dec(fits_object):
-#     # TODO: Move this to image.py::FITS class. (It concerns FITS images than catalogs.)
-#     image = Image(fits_object)
-#     ps = fits_object.plate_solution  # a pandas Series
-#     ra_list, dec_list = [], []
-#     for xfract in [-0.5, 0.5]:
-#         dx = xfract * image.xsize
-#         for yfract in [-0.5, 0.5]:
-#             dy = yfract * image.ysize
-#             d_east_west = 1.03 * (dx * ps['CD1_1'] + dy * ps['CD1_2'])  # in degrees
-#             d_ra = d_east_west / cos(ps['CRVAL2'] / DEGREES_PER_RADIAN)      # "
-#             d_dec = 1.03 * (dx * ps['CD2_1'] + dy * ps['CD2_2'])        # "
-#             ra_list.append(ps['CRVAL1'] + d_ra)
-#             dec_list.append(ps['CRVAL2'] + d_dec)
-#     ra_deg_min = min(ra_list) % 360.0
-#     ra_deg_max = max(ra_list) % 360.0
-#     dec_deg_min = min(dec_list)
-#     dec_deg_max = max(dec_list)
-#     return ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max
-
 

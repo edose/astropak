@@ -11,8 +11,9 @@ class IniFile:
     """ Holds one .ini file's contents in easily retrievable form (like a dict). Immutable.
         Reads .ini file, stores data, delivers on demand.
         Available value types for template:
-            int, float, string : holds value in type indicated. Multiline strings are joined by a space.
-            string list: holds string or multiline string as a *list* of strings, even if only one line.
+            int, float, boolean: holds value in type indicated.
+            string: holds one string. Any multiline strings are joined by spaces to one string.
+            string list: holds a *list* of strings, even if only one line (list element).
     """
     def __init__(self, inifile_fullpath):
         """ Takes template OrderedDict and .ini file name, creates object.

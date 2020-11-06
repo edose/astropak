@@ -209,6 +209,44 @@ class RaDec:
         return "RaDec('" + ra_hex + "', '" + dec_hex + "')"
 
 
+class Astronight:
+    """ Object: relevant timing and sky-location info specific to one observing night at one site.
+        Replacement for class photrix::user.py::Astronight, which relies on legacy package ephem.
+        Implementation (and package location) change only.
+        Constructor to use new .ini-file based site dict rather than hard-coded site data.
+        API otherwise to be 100% compatible with (superset of) class photrix::user.py::Astronight.
+        This implementation relies on package astroplan (astropy-affiliated).
+    Planned API / Usage:
+        ===== Constructor:
+        an = Astronight(20201103, dsw_dict)
+        ===== Properties:
+        .an_date_string
+        .local_middark_jd
+        .local_middark_lst
+        .local_middark_utc
+        .moon_phase    [at middark]
+        .moon_radec    [ " ]
+        .moon_transit  [ " ]
+        .site
+        .site_name
+        .ts_dark         [Timespan object]
+        .ts_dark_no_moon [ " ]
+        .ts_nosun        [ " ]
+        ===== Methods:
+        .ts_observable(target_radec, min_alt, min_moon_dist)
+        .ts_fov_observable(fov, min_alt, min_moon_dist)  [convenience function for photrix, deprecated]
+        .transit(target_radec)
+        .datetime_utc_from_hhmm(hhmm_string)  [engine implementation should be moved to outside function]
+        .__repr__()
+        .__str__()  [ADD THIS]
+    """
+
+    def __init__(self, an_date, site_dict):
+        self.an_date = str(an_date)
+        self.site_dict = site_dict.copy()
+        # TODO: Code and test replacement Astronight class using package astroplan.
+
+
 _____RA_and_DEC_FUNCTIONS_____________________________________ = 0
 
 
@@ -428,7 +466,7 @@ def az_alt_at_datetime_utc(longitude, latitude, target_radec, datetime_utc):
     return target_ephem.az * 180 / math.pi, target_ephem.alt * 180 / math.pi
 
 
-_____OTHER_UTILITY_FUNCTIONS________________________________ = 0
+_____MATH_and_OTHER_FUNCTIONS________________________________ = 0
 
 
 DEFAULT_LADDER = (1.0, 1.25, 1.6, 2.0, 2.5, 3.2, 4.0, 5.0, 6.4, 8.0, 10.0)  # for ladder_round().

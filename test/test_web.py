@@ -48,4 +48,25 @@ def test_make_df_mpes():
     iiii = 4
 
 
+def test_try_lcdb():
+    mp_number = 4954  # has color info.
+    site_dict = DSW_SITE_DICT
+    utc_start = '2020-11-02'
+    ci_table = web.try_lcdb(mp_number, site_dict, utc_start)
+    return ci_table
 
+
+def test_class_lcdb_colors():
+    fullpath = os.path.join(TEST_TOP_DIRECTORY, '$data_for_test', 'LC_COLORINDEX_PUB.TXT')
+    c = web.LCDB_Colors(fullpath)
+    assert c.has_id(5) == True
+    assert c.has_id(18) == False
+    assert c.color_count(5) == 2
+    assert c.color_count(18) == 0
+    assert c.color_count(21) == 5
+    assert c.color_count('2009 BO64') == 4
+    assert sum([c.color_count(i) for i in [174567, '1996 TK66']]) == 10 + 7
+    assert c.sloan_count(21) == 0
+    assert c.sloan_count('2006 QJ181') == 2
+    assert c.jc_count('NOT AN ID') == 0
+    assert c.jc_count(40035) == 4

@@ -7,6 +7,7 @@ from math import ceil
 
 # External packages:
 import requests
+from bs4 import BeautifulSoup
 import pandas as pd
 
 # From other modules, this package:
@@ -15,6 +16,7 @@ from astropak.util import degrees_as_hex, ra_as_degrees, dec_as_degrees, float_o
 
 MAX_IDS_PER_MPES_PAGE = 100
 MPES_URL_STUB = 'https://cgi.minorplanetcenter.net/cgi-bin/mpeph2.cgi'
+LCDB_URL_STUB = 'http://www.minorplanet.info/PHP/generateOneAsteroidInfo.php'
 GET_HEADER = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:64.0) Gecko/20100101 Firefox/64.0'}
 MIN_MPES_TABLE_WORDS = 25  # min. white-space-delimited words that can make an ephem table line.
 MIN_MP_ALTITUDE = 30
@@ -59,9 +61,14 @@ DF_MPES_COLUMN_ORDER = ['Number', 'Name', 'Code', 'H', 'V_mag',
                         'Astrometry']
 
 
+_____MPES_DOWNLOADING_______________________________________ = 0
+
+
 def make_df_mpes(mp_list=None, site_dict=None, utc_start=None, hours=13, file_fullpath=None):
+    """ Make dataframe from MPC (MPES, Minor Planet Ephemeris Service) web pages, for a list of MPs"""
     n = len(mp_list)
     n_calls = ceil(n / MAX_IDS_PER_MPES_PAGE)
+    df_mpes = None  # keep IDE happy.
     for i in range(n_calls):
         i_min = i * MAX_IDS_PER_MPES_PAGE
         i_max = min(i_min + MAX_IDS_PER_MPES_PAGE, n)
@@ -91,7 +98,6 @@ def make_df_mpes_one_page(mp_list=None, site_dict=None, utc_start=None, hours=13
         with open(file_fullpath, 'r') as f:
             lines = f.readlines()
     else:
-        # TODO: Add iau code as substitute for RaDec.
         if len(mp_list) > MAX_IDS_PER_MPES_PAGE:
             print(' >>>>> WARNING:', str(len(mp_list)), 'items requested,', str(MAX_IDS_PER_MPES_PAGE),
                   'is the maximum. Using first', str(MAX_IDS_PER_MPES_PAGE), ' only.')
@@ -130,13 +136,10 @@ def make_df_mpes_one_page(mp_list=None, site_dict=None, utc_start=None, hours=13
     return df_mpes_one_page
 
 
-_____SUPPORT_FUNCTIONS___________________________________ = 0
-
-
 def utc_as_mpes_decimal(utc):
     """ Take datetime in UTC, return string like 2020 11 01.15 suitable for MPES use.    
     :param utc: datetime in UTC. [datetime object]
-    :return: 
+    :return: 'mm+dd' representation of month and day. [string]
     """
     month_string = '{0:04d}+{1:02d}'.format(utc.year, utc.month)
     decimal = utc.hour / 24 + utc.minute / 24 / 60 + utc.second / 24 / 3600
@@ -252,6 +255,142 @@ def make_df_from_mp_blocks(mp_blocks):
     return df
                         
 
+_____LCDB_ONE_ASTEROID_DOWNLOADING__________________________ = 0
+
+def try_lcdb(mp_number=4954, site_dict=None, utc_start='2020-11-02', file_fullpath=None):
+    """ Download and parse one minorplanet.info 'One Asteroid' page, parse it, save data as dataframe.
+        Not yet needed for color-index historical data screening, so suspend development 2020-11-01.
+    """
+    if file_fullpath is not None:
+        with open(file_fullpath, 'r') as f:
+            lines = f.readlines()
+    else:
+        url = 'http://www.minorplanet.info/PHP/generateOneAsteroidInfo.php/'
+        longitude = site_dict['longitude'] \
+            if site_dict['longitude'] <= 180 \
+            else site_dict['longitude'] - 360
+        parameter_dict = {'AstNumber': str(mp_number),
+                          'AstName': '',
+                          'Longitude': str(longitude),
+                          'Latitude': str(site_dict['latitude']),
+                          'StartDate': utc_start,
+                          'UT': '7',
+                          'subOneShot': 'Submit'}
+        r = requests.post(url, data=parameter_dict)
+        soup = BeautifulSoup(r.text, features='html5lib')
+        tables = soup.find_all('table')
+        ci_table = [t for t in tables if 'SGErr' in t.strings][-1]  # Color index table; OK to here.
+        # TODO: Complete this parsing if and when needed.
+        return ci_table
+
+
+_____LCDB_COLOR_INDEX_DATABASE______________________________ = 0
+
+class LCDB_Colors:
+    """ Contains data from one LCDB Color Index file (probably named LC_COLORINDEX_PUB.TXT) as downloaded
+        from minorplanet.info (their current DB).
+    """
+    def __init__(self, fullpath):
+        self.contents = dict()  # accumulator
+        self.is_valid = None    # placeholder
+        if fullpath is not None:
+            with open(fullpath, 'r') as f:
+                lines = f.readlines()
+        if not lines[0].startswith('ASTEROID LIGHTCURVE') or not lines[1].startswith('GENERATED: '):
+            print(' >>>>> ERROR: File header does not look like a Color Index file.')
+            self.is_valid = False
+            return
+        table_start_found = False
+        table_header_found = False
+        mp_number, mp_name, flag, period, amplitude = None, None, None, None, None
+        color_columns, color_list = [], []
+        for i, line in enumerate(lines):
+            # Skip blank lines:
+            if line.strip() == '':
+                continue
+            # Skip lines until table start found:
+            if not table_start_found:
+                if line.startswith(50 * '-'):
+                    table_start_found = True
+                    continue
+            # If table header, parse color columns:
+            if not table_header_found:
+                if line.startswith('Number   '):
+                    table_header_found = True
+                    color_start_columns = []
+                    pieces = line.rpartition(' Amp ')
+                    color_names = pieces[2].split()
+                    i_start = len(pieces[0] + pieces[1])
+                    for color_name in color_names:
+                        i_color_name = line.find(color_name, i_start)
+                        i_start += len(color_name)
+                        color_start_columns.append(i_color_name)
+                    color_columns = []
+                    for ii, col in enumerate(color_start_columns):
+                        if ii < len(color_start_columns) - 1:
+                            color_columns.append((color_names[ii], col, color_start_columns[ii + 1]))
+                        else:
+                            color_columns.append((color_names[ii], col, len(line) - 1))
+                continue
+            # Case: line is MP record header:
+            if line[:7].strip() != '':
+                if mp_number is not None and len(color_list) >= 1:
+                    self._save_record(mp_number, mp_name, flag, period, amplitude, color_list)
+                    mp_number = None
+                mp_number = int(line[:7])
+                mp_name = line[10:41].strip()
+                flag = line[8]
+                period = float_or_none(line[41:55])
+                amplitude = float_or_none(line[55:59])
+                color_list = []
+                continue
+            # Case: line containing color-index data:
+            if line[:10].strip() == '' and line[10:35].strip() != '':
+                for name, start, end in color_columns:
+                    color_string = line[start:end]
+                    if color_string.strip() != '':
+                        color_list.append((name, float(color_string)))
+                    iiii = 4
+            iiii = 4
+        # Ensure last item is saved:
+        if mp_number is not None and len(color_list) >= 1:
+            self._save_record(mp_number, mp_name, flag, period, amplitude, color_list)
+
+    def _save_record(self, mp_number, mp_name, flag, period, amplitude, color_list):
+        key = mp_number if mp_number != 0 else mp_name
+        self.contents[key] = {
+            'mp_number': mp_number,
+            'mp_name': mp_name,
+            'flag': flag,
+            'period': period,
+            'amplitude': amplitude,
+            'color_list': color_list
+        }
+
+    def color_count(self, mp_id):
+        """ Return total number of color values for this MP ID. """
+        record = self.contents.get(mp_id, None)
+        return 0 if record is None else len(record['color_list'])
+
+    def sloan_count(self, mp_id):
+        """ Return number of Sloan color values for this MP ID. """
+        record = self.contents.get(mp_id, None)
+        if record is None:
+            return 0
+        sloan_values = [1 for entry in record['color_list'] if entry[0] in ['SGR', 'SRI', 'SIZ']]
+        return len(sloan_values)
+
+    def jc_count(self, mp_id):
+        """ Return number of Johnson-Cousins color values for this MP ID. """
+        record = self.contents.get(mp_id, None)
+        if record is None:
+            return 0
+        jc_values = [1 for entry in record['color_list'] if entry[0] in ['BV', 'BR', 'VR', 'VI', 'RI']]
+        return len(jc_values)
+
+    def has_id(self, mp_id):
+        """ Returns True iff mp_id has any record in this database file, else returns False. """
+        return mp_id in self.contents.keys()
 
 
 

@@ -63,10 +63,57 @@ DF_MPES_COLUMN_ORDER = ['Number', 'Name', 'Code', 'H', 'V_mag',
 
 _____MPES_DOWNLOADING_______________________________________ = 0
 
+""" df_mpes columns (as of 2020-11-20):
+    [index]: sequential integers from 0. [int]
+    Number: MP number. [int]
+    Name: MP name. [string]
+    Code: MPC coded MP ID. [string]
+    H: H-G magnitude. [float]
+    V_mag: expected V magnitude. [string, not float]
+    UTC: datetime UTC. [pandas timestamp = datetime]
+    UTC_text: UTC text, e.g., '2020 11 03 01000'. [string]
+    RA: RA as hex text, e.g., '22:00:33.8'. [string]
+    Dec: Dec as hex text, e.g., '-12:56:10'. [string]
+    Phase_angle: sun-MP-earth phase angle. [float]
+    Az: azimuth eastward from north, in degrees. [float]
+    Alt: altitude above horizon, in degrees. [int]
+    Motion: sky velocity, in arcseconds per minute. [float]
+    Motion_pa: sky motion direction, in degrees. [float]
+    Sun_alt: altitude of sun, in degrees. [float]
+    Moon_phase: phase of moon, 'fullness', 0 to 1, where 1=full, 0=new. [float]
+    Moon_dist: MP sky distance from moon, in degrees. [float]
+    Moon_alt: moon altitude above horizon, in degrees. [int]
+    Astrometry: NA.    
+"""
+
+
+def make_df_mpes_block(mp_start=None, mp_end=None, site_dict=None,
+                       utc_start=None, hours=13, file_fullpath=None):
+    """ Make dataframe from MPC (MPES) web pages, for a continguous series of MP numbers.
+    :param mp_start: lowest of sequential MP numbers to retrieve. [int]
+    :param mp_end: highest of sequential MP numbers to retrieve. [int]
+    :param site_dict: site-definition dict (usually from make_site_dict()). [python dict]
+    :param utc_start: datetime in UTC. [datetime object]
+    :param hours: number of hours to retrieve. [int]
+    :param file_fullpath: fullpath of file from which to retrieve MPES-equivalent text, rather than
+        getting from web. Used for testing. [string]
+    """
+    mp_list = [i for i in range(mp_start, mp_end + 1)]  # inclusive of start and end MP numbers.
+    return make_df_mpes(mp_list, site_dict, utc_start, hours, file_fullpath)
+
 
 def make_df_mpes(mp_list=None, site_dict=None, utc_start=None, hours=13, file_fullpath=None):
-    """ Make dataframe from MPC (MPES, Minor Planet Ephemeris Service) web pages, for a list of MPs"""
+    """ Make dataframe from MPC (MPES, Minor Planet Ephemeris Service) web pages, for a list of MPs
+    :param mp_list: list of MP IDs to retrieve, either as integers or strings. [list of strs or ints]
+    :param site_dict: site-definition dict (usually from make_site_dict()). [python dict]
+    :param utc_start: datetime in UTC. [datetime object]
+    :param hours: number of hours to retrieve. [int]
+    :param file_fullpath: fullpath of file from which to retrieve MPES-equivalent text, rather than
+        getting from web. Used for testing. [string]
+    """
     n = len(mp_list)
+    if n <= 0:
+        return None
     n_calls = ceil(n / MAX_IDS_PER_MPES_PAGE)
     df_mpes = None  # keep IDE happy.
     for i in range(n_calls):
@@ -81,6 +128,7 @@ def make_df_mpes(mp_list=None, site_dict=None, utc_start=None, hours=13, file_fu
             df_mpes = df_mpes.append(df_sub)
             print('         &', str(mp_list[i_min]), str(mp_list[i_max - 1]))
     print('Finished.')
+    df_mpes.index = [i for i in range(len(df_mpes))]  # index is sequential integers, from zero.
     return df_mpes
 
 
@@ -89,9 +137,11 @@ def make_df_mpes_one_page(mp_list=None, site_dict=None, utc_start=None, hours=13
         date, return dataframe of relevant data parsed from that page.  
         Adapted from mp_phot::mp_astrometry.py::get_one_html_from_text() and ::html().
     :param mp_list: list of MP IDs to retrieve, either as integers or strings. [list of strs or ints]
-    :param site_dict:
-    :param utc_start: 
-    :param hours: 
+    :param site_dict: site-definition dict (usually from make_site_dict()). [python dict]
+    :param utc_start: datetime in UTC. [datetime object]
+    :param hours: number of hours to retrieve. [int]
+    :param file_fullpath: fullpath of file from which to retrieve MPES-equivalent text, rather than
+        getting from web. Used for testing. [string]
     :return: 
     """
     if file_fullpath is not None:
@@ -256,6 +306,7 @@ def make_df_from_mp_blocks(mp_blocks):
                         
 
 _____LCDB_ONE_ASTEROID_DOWNLOADING__________________________ = 0
+
 
 def try_lcdb(mp_number=4954, site_dict=None, utc_start='2020-11-02', file_fullpath=None):
     """ Download and parse one minorplanet.info 'One Asteroid' page, parse it, save data as dataframe.

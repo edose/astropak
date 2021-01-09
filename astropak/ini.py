@@ -15,18 +15,22 @@ class IniFile:
             string: holds one string. Any multiline strings are joined by spaces to one string.
             string list: holds a *list* of strings, even if only one line (list element).
     """
-    def __init__(self, inifile_fullpath):
+    def __init__(self, inifile_fullpath, template_directory_path=None):
         """ Takes template OrderedDict and .ini file name, creates object.
         :param inifile_fullpath: fullpath of .ini file to read & store. [string]
+        :param template_directory_path: path of directory holding template for this ini file,
+                   or default (path of ini file's own directory or of the next directory up) if None.
+                   [string or None]
         """
         # Declare fields (as placeholders):
         self.inifile_fullpath = inifile_fullpath
+        self.template_directory_path = template_directory_path
         self.value_dict = OrderedDict()
         self.warnings = []
         self.is_valid = True  # presumptive value to be negated on error.
 
         # Read .ini file into ini_config:
-        if not(os.path.exists(inifile_fullpath) and os.path.isfile(inifile_fullpath)):
+        if not (os.path.exists(inifile_fullpath) and os.path.isfile(inifile_fullpath)):
             self.warnings.append('Ini file not found: ' + inifile_fullpath)
             self.is_valid = False
             return
@@ -41,9 +45,17 @@ class IniFile:
             self.warnings.append('Template filename not parsed. See top of .ini file.')
             self.is_valid = False
             return
-        self.template_fullpath = self.find_template_file()
+        if self.template_directory_path is None:
+            self.template_fullpath = self.find_template_file()
+        else:
+            self.template_fullpath = os.path.join(self.template_directory_path, self.template_filename)
         if self.template_fullpath is None:
-            self.warnings.append('Template file not found. See top of .ini file.')
+            self.warnings.append('Template path not specified, and '
+                                 'template not found in ini dir or its parent dir.')
+            self.is_valid = False
+            return
+        elif not os.path.isfile(self.template_fullpath):
+            self.warnings.append('Template not found at ' + self.template_fullpath + '.')
             self.is_valid = False
             return
         # Now that we have template fullpath, open the template file:
@@ -59,20 +71,23 @@ class IniFile:
 
     def find_template_file(self):
         """ Find template file in likely directories, return fullpath. """
+        # If template directory was given, use that to construct fullpath and return immediately:
+        pass
+
         inifile_path = os.path.dirname(self.inifile_fullpath)
-        # First, seek template file in same directory as .ini file itself:
+        # Otherwise, seek template file in same directory as .ini file itself:
         trial_directory_path = inifile_path
         trial_template_fullpath = os.path.join(trial_directory_path, self.template_filename)
         if os.path.exists(trial_template_fullpath) and os.path.isfile(trial_template_fullpath):
             return trial_template_fullpath
 
-        # Next, seek template in next directory up:
+        # Otherwise, seek template in next directory up:
         trial_directory_path = os.path.dirname(trial_directory_path)
         trial_template_fullpath = os.path.join(trial_directory_path, self.template_filename)
         if os.path.exists(trial_template_fullpath) and os.path.isfile(trial_template_fullpath):
             return trial_template_fullpath
 
-        return None  # signals 'template file not found.'
+        return None  # which signals 'template file not found.'
 
     def parse_and_store_one_entry(self, section, key, template_value_string):
         """ Parse value_string(s) into (1) key and (2) value to store, then add to storage dict. """
@@ -81,7 +96,7 @@ class IniFile:
         value = self.ini_config.get(section, key, fallback=None)
         # value = self.ini_config[section][key].strip()
         if value is None:
-            self.warnings.append('Entry not found in .ini file [' + section + '][' + key + '].')
+            self.warnings.append('Value for [' + section + '][' + key + '] not found in .ini file.')
             return
 
         if value_type == 'int':
@@ -95,7 +110,8 @@ class IniFile:
             try:
                 value_to_store = float(value)  # TODO: add try/catch.
             except (TypeError, ValueError):
-                self.warnings.append('Cannot be parsed as float: ' + value)
+                self.warnings.append('Value for [' + section + '][' + key +\
+                                     '] cannot be parsed as float: \'' + value + '\'')
                 self.is_valid = False
                 return
         elif value_type in ['boolean', 'bool']:

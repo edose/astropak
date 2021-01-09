@@ -11,6 +11,7 @@ __author__ = "Eric Dose :: New Mexico Mira Project, Albuquerque"
 # Python core packages:
 from datetime import datetime, timedelta, timezone
 import math
+import os
 
 # External packages:
 import ephem  # TODO: remove ephem dependency, in favor of astroplan.
@@ -216,6 +217,7 @@ class Astronight:
         Constructor to use new .ini-file based site dict rather than hard-coded site data.
         API otherwise to be 100% compatible with (superset of) class photrix::user.py::Astronight.
         This implementation relies on package astroplan (astropy-affiliated).
+        This implementation gets site data from ini files (not from files embedded in photrix package).
     Planned API / Usage:
         ===== Constructor:
         an = Astronight(20201103, dsw_dict)
@@ -400,6 +402,20 @@ def degrees_as_hex(angle_degrees, arcseconds_decimal_places=2):
     return hex_string
 
 
+def parse_hex(hex_string):
+    """ Helper function for RA and Dec parsing, takes hex string, returns list of floats.
+        Not normally called directly by user. TESTS OK 2020-10-24.
+    :param hex_string: string in either full hex ("12:34:56.7777" or "12 34 56.7777"),
+               or degrees ("234.55")
+    :return: list of strings representing floats (hours:min:sec or deg:arcmin:arcsec).
+    """
+    colon_list = hex_string.split(':')
+    space_list = hex_string.split()  # multiple spaces act as one delimiter
+    if len(colon_list) >= len(space_list):
+        return [x.strip() for x in colon_list]
+    return space_list
+
+
 _____TIME_and_DATE_FUNCTIONS________________________________ = 0
 
 
@@ -410,6 +426,22 @@ def get_phase(jd, jd_phase_zero, period_days):
     if phase < 0:
         phase += 1
     return phase
+
+
+def next_date_utc(ref_date=None):
+    """ Returns 0-hour UTC datetime for next day from given date.
+    :param ref_date: date from which to return next 0-hour UTC datetime (or now if None). [py datetime]
+    :return: next datetime UTC from ref_date. [py datetime]
+    """
+    # TODO: needs test.
+    if ref_date is None:
+        target_date = datetime.now(timezone.utc) + timedelta(days=1)
+    else:
+        target_date = ref_date + timedelta(days=1)
+    next_date_utc = datetime(target_date.year, target_date.month,
+                             target_date.day, 0, 0, 0).replace(tzinfo=timezone.utc)
+    # next_date_utc = '{0:04d}{1:02d}{2:02d}'.format(target_date.year, target_date.month, target_date.day)
+    return next_date_utc
 
 
 def jd_from_datetime_utc(datetime_utc=None):
@@ -519,18 +551,17 @@ def ladder_round(raw_value, ladder=DEFAULT_LADDER, direction="nearest"):
                 return base * ladder[i+1]  # round upward
 
 
-_____HELPER_FUNCTIONS_______________________________________ = 0
+_____FILESYSTEM_FUNCTIONS___________________________________ = 0
 
 
-def parse_hex(hex_string):
-    """ Helper function for RA and Dec parsing, takes hex string, returns list of floats.
-        Not normally called directly by user. TESTS OK 2020-10-24.
-    :param hex_string: string in either full hex ("12:34:56.7777" or "12 34 56.7777"),
-               or degrees ("234.55")
-    :return: list of strings representing floats (hours:min:sec or deg:arcmin:arcsec).
+def make_directory_if_not_exists(directory_path):
+    """ As the name says. Will not touch existing directory with this path, no matter what.
+    :param directory_path: path specification for desired new directory. [string]
+    Usage: make_directory_if_not_exists('C:/Astro/ACP/AN20201111')
+    :return: path_preexists, True iff path already existed and this fn did nothing, else False. [boolean]
     """
-    colon_list = hex_string.split(':')
-    space_list = hex_string.split()  # multiple spaces act as one delimiter
-    if len(colon_list) >= len(space_list):
-        return [x.strip() for x in colon_list]
-    return space_list
+    path_preexists = (os.path.exists(directory_path) and os.path.isdir(directory_path))
+    if not path_preexists:
+        os.mkdir(directory_path)
+    return path_preexists
+

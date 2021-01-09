@@ -41,7 +41,7 @@ def test_make_df_mpes_one_page():
 
 
 def test_make_df_mpes():
-    mp_list = [i + 1 for i in range(342)]
+    mp_list = [i + 1 for i in range(142)]
     site_dict = DSW_SITE_DICT
     utc_start = datetime.datetime(2020, 11, 3, 0, 0, 0, tzinfo=datetime.timezone.utc)
     df_mpes = web.make_df_mpes(mp_list, site_dict, utc_start)

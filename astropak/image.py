@@ -15,7 +15,10 @@ import numpy as np
 import pandas as pd
 from scipy.stats import trim_mean
 import astropy.io.fits
+from astropy.nddata import CCDData
 from dateutil.parser import parse
+from photutils import make_source_mask, centroid_com
+from astropy.stats import sigma_clipped_stats
 
 # EVD modules:
 from .util import ra_as_degrees, dec_as_degrees, RaDec
@@ -603,6 +606,488 @@ class FITS:
                 solution[key] *= pinpoint_pixel_scale_multiplier
         return solution
 
+
+class Cutout:
+    """ Copy of image slice. Includes foreground and background masks and recentroiding.
+        Much more versatile successor to mp_phot.util's class Square.
+        IMMUTABLE once constructed; recentroiding generates new Cutout object(s).
+        Mask convention: True = MASKED out & thus unused, False = unmasked & thus valid and used
+            (same as for astropy's CCDData objects & numpy's masked arrays).
+    """
+    def __init__(self, parent, xy_center, cutout_radius, foreground_mask=None, background_mask=None):
+        """ General constructor.
+        :param parent: parent array [CCDData, numpy masked array, or numpy ndarray].
+        :param xy_center: center pixel position in parent. [2-tuple or 2-array or 2-list, of floats]
+        :param cutout_radius: half-length of cutout's edge length less one, in pixels.
+                   Actual size of cutout will be from cutout_radius rounded up,
+                   that is, from 2 * ceil(cutout_radius) + 1.
+                   So size and shape are always an odd number of pixels, no exceptions. [float]
+        :param foreground_mask: mask array for pixels to be counted in flux, centroid, etc.
+                   Shape must exactly match shape of either the parent array or the cutout array.
+                   Array True -> MASKED pixel, False -> pixel is valid and used. (numpy convention).
+                   None means 'use all pixels'. [numpy ndarray of booleans, or None]
+        :param background_mask: mask array for pixels to be counted in background flux, centroid, etc.
+                   Shape must exactly match shape of either the parent array or the cutout array.
+                   Array True -> MASKED pixel, False -> pixel is valid and used. (numpy convention).
+                   None means background is assumed zero (has no effect).
+                   [numpy ndarray of booleans, or None]
+        """
+        self.parent = parent
+        self.xy_center = tuple(xy_center)
+        self.input_radius = cutout_radius
+        self.input_foreground_mask = foreground_mask
+        self.input_background_mask = background_mask
+        self.messages = []  # warnings and/or errors for this object [list of strings].
+        input_messages = self._input_problems_detected()
+        if len(input_messages) != 0:
+            self.messages.extend(input_messages)
+            self.is_valid = False
+            return
+
+        # Determine raw cutout boundaries, in parent pixels (cutout shape will be (odd int, odd int)):
+        self.x_cutout_center = int(round(self.xy_center[0]))  # center cutout on nearest whole parent pixel.
+        self.y_cutout_center = int(round(self.xy_center[1]))  # "
+        self.radius = int(ceil(cutout_radius))  # round radius UP, if a float.
+        self.x_raw_low = self.x_cutout_center - self.radius   # parent x-pixel of cutout zero x-pixel.
+        self.x_raw_high = self.x_cutout_center + self.radius  # parent x-pixel of cutout highest x-pixel.
+        self.y_raw_low = self.y_cutout_center - self.radius   # parent y-pixel of cutout zero y-pixel.
+        self.y_raw_high = self.y_cutout_center + self.radius  # parent y-pixel of cutout highest y-pixel.
+        self.x_offset = self.x_raw_low  # alias name
+        self.y_offset = self.y_raw_low  # "
+        edge_pixel_count = self.radius * 2 + 1
+        self.shape = (edge_pixel_count, edge_pixel_count)
+        x_data_low = max(0, self.x_raw_low)
+        x_data_high = min(parent.shape[1] - 1, self.x_raw_high)
+        y_data_low = max(0, self.y_raw_low)
+        y_data_high = min(parent.shape[0] - 1, self.y_raw_high)
+        if (x_data_low > x_data_high) or (y_data_low > y_data_high):
+            self.messages.append('Cutout boundaries are outside parent array. '
+                                 'Cutout object cannot be constructed.')
+            self.is_valid = False
+            return
+
+        # Extract parent data array:
+        if isinstance(self.parent, CCDData):
+            self.parent_data = parent.data.copy()
+        elif isinstance(self.parent, np.ma.core.MaskedArray):
+            self.parent_data = parent.data.copy()
+        elif isinstance(self.parent, np.ndarray):
+            self.parent_data = parent.copy()
+        else:
+            self.is_valid = False  # should never get here if ._input_problems_detected() was run.
+            return
+
+        # Make cutout data array; fill with np.nan any pixels outside parent:
+        self.data = np.full(self.shape, fill_value=np.nan, dtype=np.double)  # most will be overwritten.
+        parent_data_for_cutout = self.parent_data[y_data_low: y_data_high + 1,
+                                                  x_data_low: x_data_high + 1].copy()
+        self.data[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                  x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = parent_data_for_cutout
+
+        # Mask (invalidate) all cutout pixels outside parent:
+        cutout_invalid_mask = np.full_like(self.data, fill_value=True, dtype=np.bool)  # all invalid.
+        cutout_valid_mask = np.full_like(self.data, fill_value=False, dtype=np.bool)  # all valid.
+        within_parent_mask = cutout_invalid_mask.copy()
+        within_parent_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                           x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = False
+        self.is_all_within_parent = not np.any(within_parent_mask)  # NB: False = valid (within parent).
+        if not self.is_all_within_parent:
+            self.is_pristine = False
+
+        # Make foreground mask. If explicitly given, use that only. A given mask must be either
+        #     of parent's shape (make a cutout of it), or of cutout's own shape (use it directly).
+        #     Any other mask shape causes a failure.
+        # If mask not given (is None): use mask from input object (CCDData or numpy masked array), or for
+        #     data-only numpy ndarray given, set mask to make valid the entire cutout.
+        # Finally, always mask out any cutout pixels outside of parent data array.
+        if self.input_foreground_mask is not None:
+            if self.input_foreground_mask.shape == self.parent.shape:
+                # Case: extract mask data from parent-shaped mask array:
+                raw_foreground_mask = cutout_invalid_mask.copy()
+                raw_foreground_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                                    x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = \
+                    self.input_foreground_mask[y_data_low: y_data_high + 1,
+                                               x_data_low: x_data_high + 1].copy()
+            elif self.input_foreground_mask.shape == self.shape:
+                # Case: copy mask data from cutout-shaped mask:
+                raw_foreground_mask = cutout_invalid_mask.copy()
+                raw_foreground_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                                    x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = \
+                    self.input_foreground_mask[y_data_low - self.y_offset:
+                                               (y_data_high + 1) - self.y_offset,
+                                               x_data_low - self.x_offset:
+                                               (x_data_high + 1) - self.x_offset]
+            else:
+                self.messages.append('Input foreground mask shape matches neither parent nor cutout shape.')
+                self.is_valid = False
+                return
+            self.foreground_mask = np.logical_or(raw_foreground_mask, within_parent_mask)
+        else:
+            if isinstance(self.parent, CCDData) or isinstance(self.parent, np.ma.core.MaskedArray):
+                raw_foreground_mask = cutout_invalid_mask
+                extracted_foreground_mask = self.parent.mask[y_data_low: y_data_high + 1,
+                                                             x_data_low: x_data_high + 1].copy()
+                raw_foreground_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                                    x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = \
+                    extracted_foreground_mask
+            elif isinstance(self.parent, np.ndarray):
+                raw_foreground_mask = np.full_like(self.data, fill_value=False, dtype=np.bool)  # all valid.
+            else:
+                self.messages.append('Parent type not in approved list.')
+                self.is_valid = False
+                return
+            self.foreground_mask = np.logical_or(raw_foreground_mask, within_parent_mask)
+
+        # Make background mask. If explicitly given, use that only. A given mask must be either
+        #     of parent's shape (make a cutout of it), or of cutout's own shape (use it directly).
+        #     Any other mask shape causes a failure.
+        # If mask not given (is None): use inverse of foreground mask.
+        # Finally, always mask out any cutout pixels outside of parent data array.
+        if self.input_background_mask is not None:
+            if self.input_background_mask.shape == self.parent.shape:
+                # Case: extract mask data from parent-shaped mask array:
+                raw_background_mask = cutout_invalid_mask.copy()
+                raw_background_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                                    x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = \
+                    self.input_background_mask[y_data_low: y_data_high + 1,
+                                               x_data_low: x_data_high + 1].copy()
+            elif self.input_background_mask.shape == self.shape:
+                # Case: copy mask data from cutout-shaped mask:
+                raw_background_mask = cutout_invalid_mask.copy()
+                raw_background_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                                    x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = \
+                    self.input_background_mask[y_data_low - self.y_offset:
+                                               (y_data_high + 1) - self.y_offset,
+                                               x_data_low - self.x_offset:
+                                               (x_data_high + 1) - self.x_offset]
+            else:
+                self.messages.append('Input background mask shape matches neither parent nor cutout shape.')
+                self.is_valid = False
+                return
+            self.background_mask = np.logical_or(raw_background_mask, within_parent_mask)
+        else:
+            raw_background_mask = np.logical_not(self.foreground_mask)  # simply inverse of foreground mask.
+            self.background_mask = np.logical_or(raw_background_mask, within_parent_mask)
+
+        # Pixel counts:
+        self.pixel_count = self.shape[0] * self.shape[1]
+        self.foreground_pixel_count = np.sum(self.foreground_mask == False)
+        self.background_pixel_count = np.sum(self.background_mask == False)
+
+        # Warn if any overlap between foreground and background masks (usually indicates a problem):
+        self.mask_overlap_pixel_count = np.sum(np.logical_not(np.logical_or(self.foreground_mask,
+                                                                            self.background_mask)))
+        if np.sum(self.mask_overlap_pixel_count) > 0:
+            self.messages.append('Warning: ' + str(self.mask_overlap_pixel_count) +
+                                 ' pixels are in both foreground and background masks.')
+            self.is_pristine = False
+
+        self.xy_centroid = self._calc_centroid()  # 2-tuple of floats
+        self.is_valid = True
+        self.is_pristine = (len(self.messages) == 0) and self.is_valid
+
+    def __str__(self):
+        return 'Cutout object of x,y shape (' + str(self.shape[1]) + ', ' + str(self.shape[0]) + ')' +\
+               ' from parent of x,y shape (' + str(self.parent.shape[1]) + ', ' + \
+               str(self.parent.shape[0]) + ')'
+
+    def _input_problems_detected(self):
+        messages = []
+        if not type(self.parent) in [CCDData, np.ma, np.ndarray]:
+            messages.append('Input array \'parent\' is of invalid type.')
+        if len(self.xy_center) != 2:
+            messages.append('Input tuple \'xy_center\' is invalid, must be 2-tuple of floats or ints.')
+        elif (self.xy_center[0] < 0) or (self.xy_center[0] > self.parent.shape[1] - 1) or \
+             (self.xy_center[1] < 0) or (self.xy_center[1] > self.parent.shape[0] - 1):
+            messages.append('Input \'xy_center\' is outside parent array.')
+        if self.input_radius <= 0:
+            messages.append('Input \'input radius\' invalid, must be positive int or float.')
+        if self.input_foreground_mask is not None:
+            invalidity_string = 'Input \'foreground_mask\' invalid, must be a numpy ndarray of booleans.'
+            if type(self.input_foreground_mask) != np.ndarray:
+                messages.append(invalidity_string)
+            elif self.input_foreground_mask.dtype != np.bool:
+                messages.append(invalidity_string)
+        if self.input_background_mask is not None:
+            invalidity_string = 'Input \'background_mask\' invalid, must be a numpy ndarray of booleans.'
+            if type(self.input_background_mask) != np.ndarray:
+                messages.append(invalidity_string)
+            elif self.input_background_mask.dtype != np.bool:
+                messages.append(invalidity_string)
+        return messages
+
+    @classmethod
+    def circular_mask_and_radius(cls, parent, xy_center, cutout_radius, foreground_mask_radius, gap=0.0):
+        """ Alternate constructor, typically for stationary light sources (like stars) within an image.
+            Circular mask centered in cutout, with explicit radius.
+        :param parent: parent array [CCDData, numpy masked array, or numpy ndarray].
+        :param xy_center: center pixel position in parent. [2-tuple or 2-array or 2-list, of floats]
+        :param cutout_radius: half-length of cutout's edge length less one, in pixels. [float]
+        :param foreground_mask_radius: radius of foreground (star) mask, in pixels [float]
+        :param gap: gap between outer edge of foreground mask and inner edge of background mask,
+                   in pixels. Useful for aperture photometry of stars. Leave at zero for no gap. [float]
+        :return: Cutout object as defined.
+        """
+        raw_cutout = Cutout(parent, xy_center, cutout_radius, foreground_mask=None, background_mask=None)
+        x0 = raw_cutout.xy_center[0] - raw_cutout.x_offset
+        y0 = raw_cutout.xy_center[1] - raw_cutout.y_offset
+        new_foreground_mask = make_circular_mask(raw_cutout.shape[0], (x0, y0), foreground_mask_radius)
+        if gap <= 0.0:
+            # No gap; let Cutout constructor make default background mask.
+            return Cutout(parent, xy_center, cutout_radius, foreground_mask=new_foreground_mask)
+        else:
+            background_mask_radius = foreground_mask_radius + gap
+            new_background_mask = np.logical_not(make_circular_mask(raw_cutout.shape[0], (x0, y0),
+                                                                    background_mask_radius))
+            return Cutout(parent, xy_center, cutout_radius, foreground_mask=new_foreground_mask,
+                          background_mask=new_background_mask)
+
+    @classmethod
+    def circular_mask_and_margin(cls, parent, xy_center, margin, foreground_mask_radius, gap=0.0):
+        """ Alternate constructor, typically for stationary light sources (like stars) within an image.
+            Circular mask centered in cutout, with cutout's size the smallest that allows for
+                the foreground mask, a gap to the (circular) background mask, and a margin.
+        :param parent: parent array [CCDData, numpy masked array, or numpy ndarray].
+        :param xy_center: center pixel position in parent. [2-tuple or 2-array or 2-list, of floats]
+        :param margin: pixel span required between mask edge & its gap to the cutout edge.
+        :param foreground_mask_radius: radius of foreground (star) mask, in pixels [float]
+        :param gap: gap between outer edge of foreground mask and inner edge of background mask,
+                   in pixels. Useful for aperture photometry. Leave at zero for no gap. [float]
+        :return: Cutout object as defined.
+        """
+        cutout_radius = int(ceil(foreground_mask_radius + gap + margin))
+        return Cutout.circular_mask_and_radius(parent, xy_center, cutout_radius,
+                                               foreground_mask_radius, gap)
+
+    @classmethod
+    def pill_mask_and_radius(cls, parent, xy_start, xy_end, cutout_radius, foreground_mask_radius, gap=0.0):
+        """ Alternate constructor, typically for moving light sources (like MPs) within an image.
+            Pill-shaped mask: a line segment between xy_start and xy_end,
+                expanded circularly by mask_radius. Specify cutout_radius.
+        :param parent: parent array [CCDData, numpy masked array, or numpy ndarray].
+        :param xy_start:
+        :param xy_end:
+        :param cutout_radius: half-length of cutout's edge length less one, in pixels. [float]
+        :param foreground_mask_radius: radius of foreground (star) mask, in pixels [float]
+        :param gap: gap between outer edge of foreground mask and inner edge of background mask,
+                   in pixels. Useful for aperture photometry of stars. Leave at zero for no gap. [float]
+        :return: Cutout object as defined.
+        """
+        # Center cutout on the center of moving source's track:
+        new_cutout_radius = int(ceil(cutout_radius))  # next higher integer.
+        cutout_size = int(ceil(new_cutout_radius * 2 + 1))  # size must be an odd integer.
+        xy_center = (xy_start[0] + xy_end[0]) / 2.0, (xy_start[1] + xy_end[1]) / 2.0
+        raw_cutout = Cutout(parent, xy_center, cutout_radius, foreground_mask=None, background_mask=None)
+        x_start_cutout = xy_start[0] - raw_cutout.x_offset
+        y_start_cutout = xy_start[1] - raw_cutout.y_offset
+        x_end_cutout = xy_end[0] - raw_cutout.x_offset
+        y_end_cutout = xy_end[1] - raw_cutout.y_offset
+        xy_start_cutout = (x_start_cutout, y_start_cutout)
+        xy_end_cutout = (x_end_cutout, y_end_cutout)
+        new_foreground_mask = make_pill_mask(cutout_size, xy_start_cutout, xy_end_cutout,
+                                             foreground_mask_radius)
+        if gap > 0.0:
+            background_mask_radius = foreground_mask_radius + gap
+            new_background_mask = np.logical_not(make_pill_mask(cutout_size, xy_start_cutout, xy_end_cutout,
+                                                                background_mask_radius))
+            return Cutout(parent, xy_center, cutout_radius, new_foreground_mask, new_background_mask)
+        else:
+            # Let Cutout's constructor make background mask from inverse of foreground mask.
+            return Cutout(parent, xy_center, cutout_radius, new_foreground_mask)
+
+    @classmethod
+    def pill_mask_and_margin(cls, parent, xy_start, xy_end, margin, foreground_mask_radius, gap=0.0):
+        """ Alternate constructor, typically for moving light sources (like MPs) within an image.
+            Pill-shaped mask: a line segment between xy_start and xy_end,
+                expanded circularly by mask_radius. Specify mask_radius, which sets cutout_radius to fit.
+        :param parent: parent array [CCDData, numpy masked array, or numpy ndarray].
+        :param xy_start:
+        :param xy_end:
+        :param margin: pixel span required between mask edge and cutout edge.
+        :param foreground_mask_radius: radius of foreground (minor planet) mask, in pixels [float]
+        :param gap: gap between outer edge of foreground mask and inner edge of background mask,
+                   in pixels. Useful for aperture photometry. Leave at zero for no gap. [float]
+        :return: Cutout object as defined.
+        """
+        foreground_mask_x_span = abs(xy_start[0] - xy_end[0]) + 2 * foreground_mask_radius
+        foreground_mask_y_span = abs(xy_start[1] - xy_end[1]) + 2 * foreground_mask_radius
+        max_foreground_mask_span = max(foreground_mask_x_span, foreground_mask_y_span)
+        cutout_radius = int(ceil(max_foreground_mask_span / 2 + margin + gap))
+        return Cutout.pill_mask_and_radius(parent, xy_start, xy_end, cutout_radius,
+                                           foreground_mask_radius, gap)
+
+    def flux(self, use_foreground_mask=True, use_background_mask=True, gain=1):
+        """ Return flux (foreground minus background) of current object, using masks iff desired.
+        If foreground mask is used, all unmasked (valid) pixels are summed.
+        If foreground mask not used, all pixels are summed for foreground flux.
+        If background mask is used and has valid pixels, sigma-clipped median level is subtracted
+            from each foreground pixel before summing foreground.
+        If background mask not used, background flux is set to zero (to have no effect).
+        :param use_foreground_mask: [boolean]
+        :param use_background_mask: [boolean]
+        :param gain: CCD-like gain in e-/ADU. [float]
+        :return: background-adjusted foreground (source) 'net' flux,
+                 std dev uncertainty of net flux,
+                 background level (sigma-clipped median), and
+                 std dev uncertainty in background level (per pixel, not of background area's average).
+                 [4-tuple of floats]
+        """
+        if use_foreground_mask is True:
+            raw_flux = np.sum(self.data, where=np.logical_not(self.foreground_mask))
+        else:
+            raw_flux = np.sum(self.data)
+        flux_variance_from_poisson = raw_flux / gain  # from var(e-) = flux in e-.
+
+        if use_background_mask is True and self.background_pixel_count >= 2:
+            background_level, background_stddev = calc_background_value(self.data, self.background_mask)
+        else:
+            background_level, background_stddev = 0.0, 0.0  # no effect on flux or stddev.
+
+        background_adjusted_flux = raw_flux - self.foreground_pixel_count * background_level
+
+        flux_variance_from_background = self.foreground_pixel_count * \
+                                        ((background_stddev ** 2) / self.background_pixel_count)
+        flux_variance = flux_variance_from_poisson + flux_variance_from_background
+        flux_stddev = sqrt(flux_variance)
+        return background_adjusted_flux, flux_stddev, background_level, background_stddev
+
+    def _calc_centroid(self):
+        """ Return position (parent image) of local flux centroid within cutout.
+            Always background-subtracted. No iteration.
+        :return: position (x,y in *parent* image) of local flux centroid. [2-tuple of floats]"""
+        y_grid, x_grid = np.meshgrid(np.arange(self.shape[1]), np.arange(self.shape[0]))
+        background_level, _ = calc_background_value(self.data, self.background_mask)
+        data_minus_background = self.data - background_level
+        x_net_product = x_grid * data_minus_background
+        y_net_product = y_grid * data_minus_background
+        x_product_sum = np.sum(x_net_product, where=np.logical_not(self.foreground_mask))
+        y_product_sum = np.sum(y_net_product, where=np.logical_not(self.foreground_mask))
+        data_sum = np.sum(data_minus_background, where=np.logical_not(self.foreground_mask))
+        x_centroid = self.x_offset + (x_product_sum / data_sum)
+        y_centroid = self.y_offset + (y_product_sum / data_sum)
+        return x_centroid, y_centroid
+
+
+
+
+
+
+
+
+    def refine_centroid(self, max_adjustment=None, max_iterations=3):
+        """ Returns new Cutout object with refined centroid.
+            NB: New Cutout object may be displaced from present object by a pixel in either x or y.
+        :param max_adjustment: will terminate iterations if centroid adjustment is smaller than this value,
+                               in pixels. [float]
+        :param max_iterations: will terminate after this number of iterations in any case. [int]
+        :return: new Cutout object with refined centroid. [Cutout object]
+        """
+        pass  # TODO: As from mp_phot.Square, but may not be the right way to do this.
+
+
+
+_____IMAGE_and_GEOMETRY_SUPPORT____________________________________ = 0
+
+
+def make_circular_mask(mask_size, xy, radius):
+    """ Construct a traditional mask array for small, stationary object, esp. for a star.
+        Unmask only those pixels *within* radius pixels of a given point. Invert the mask separately to
+            mask the interior. Convention: pixel True -> VALID (opposite of numpy).
+    :param mask_size: edge size of new mask array, should be odd number of pixels. [int]
+    :param xy: (x, y) pixel coordinates of central point. [2-tuple of floats]
+    :param radius: radius of ends and half-width of center region. [float]
+    :return: mask array, True -> VALID (opposite convention from numpy). [np.ndarray of booleans]
+    """
+    x0, y0 = xy
+    new_mask = np.fromfunction(lambda i, j: ((j - x0) ** 2 + (i - y0) ** 2) > radius ** 2,
+                               shape=(mask_size, mask_size))  # nb: True masks out, as numpy.
+    return new_mask
+
+
+def make_pill_mask(mask_size, xya, xyb, radius):
+    """ Construct a mask array for MP in motion: unmask only those pixels within radius pixels of
+        any point in line segment from xya to xyb. Convention: pixel True -> VALID (opposite of numpy).
+    :param mask_size: edge size of new mask array, should be odd number of pixels. [int]
+    :param xya: (xa, ya) pixel coordinates of start-motion point. [2-tuple of floats]
+    :param xyb: (xb, yb) pixel coordinates of end-motion point. [2-tuple of floats]
+    :param radius: radius of ends and half-width of center region. [float]
+    :return: mask array, True -> VALID (opposite convention from numpy). [np.ndarray of booleans]
+    """
+    xa, ya = tuple(xya)
+    xb, yb = tuple(xyb)
+    dx = xb - xa
+    dy = yb - ya
+    distance_motion = sqrt(dx**2 + dy**2)
+
+    # Unmask up to radius distance from each endpoint:
+    circle_a_mask = np.fromfunction(lambda i, j: ((i - ya) ** 2 + (j - xa) ** 2) > (radius ** 2),
+                                    shape=(mask_size, mask_size))
+    circle_b_mask = np.fromfunction(lambda i, j: ((i - yb) ** 2 + (j - xb) ** 2) > (radius ** 2),
+                                    shape=(mask_size, mask_size))
+
+    # Mask outside max distance from (xa,ya)-(xb,yb) line segment:
+    rectangle_submask_1 = np.fromfunction(lambda i, j:
+                                          distance_to_line((j, i), (xa, ya), (xb, yb), distance_motion) >
+                                          radius, shape=(mask_size, mask_size))
+
+    # Mask ahead of or behind MP motion line segment:
+    dx_left = dy
+    dy_left = -dx
+    dx_right = -dy
+    dy_right = dx
+    x_center = (xa + xb) / 2.0
+    y_center = (ya + yb) / 2.0
+    x_left = x_center + dx_left
+    y_left = y_center + dy_left
+    x_right = x_center + dx_right
+    y_right = y_center + dy_right
+    distance_perpendicular = sqrt((x_right - x_left)**2 + (y_right - y_left)**2)  # prob = distance_motion
+    rectangle_submask_2 = np.fromfunction(lambda i, j:
+                                          distance_to_line((j, i), (x_left, y_left), (x_right, y_right),
+                                                           distance_perpendicular) > distance_motion / 2.0,
+                                          shape=(mask_size, mask_size))
+    # Combine masks and return:
+    rectangle_mask = np.logical_or(rectangle_submask_1, rectangle_submask_2)  # intersection of False.
+    circles_mask = np.logical_and(circle_a_mask, circle_b_mask)  # union of False.
+    mask = np.logical_and(circles_mask, rectangle_mask)          # "
+    return mask
+
+
+def distance_to_line(xy_pt, xy_a, xy_b, dist_ab=None):
+    """ Yield the closest (perpendicular) distance from point (xpt, ypt) to the line (not necessarily
+        within the closed line segment) passing through (x1,y1) and (x2,y2). """
+    xpt, ypt = tuple(xy_pt)
+    xa, ya = tuple(xy_a)
+    xb, yb = tuple(xy_b)
+    if dist_ab is None:
+        dist_ab = sqrt((yb - ya)**2 + (xb - xa)**2)
+    distance = abs((yb - ya) * xpt - (xb - xa) * ypt + xb * ya - yb * xa) / dist_ab
+    return distance
+
+
+def calc_background_value(data, mask=None):
+    """ Calculate the sigma-clipped median value of a (possibly masked) data array.
+    :param data: array of pixels. [2-D ndarray of floats]
+    :param mask: mask array, True=masked, i.e., use only False pixels. [None, or 2-D nadarray of bool]
+    :return: tuple of background adu level (flux per pixel), standard deviation within used pixels.
+                 [2-tuple of floats]
+    """
+    if mask is None:  # use all pixels.
+        this_mask = np.full_like(data, False, dtype=np.float)
+    elif mask.shape != data.shape:  # bad mask shape.
+        return None
+    elif np.sum(mask == False) == 0:  # no valid pixels.
+        return 0.0, 0.0
+    else:
+        this_mask = mask.copy()
+
+    source_mask = make_source_mask(data, mask=this_mask, nsigma=2, npixels=5, filter_fwhm=2, dilate_size=11)
+    _, median, std = sigma_clipped_stats(data, sigma=3.0, mask=source_mask)
+    return median, std
+
+
+
+_____FITS_FILE_HANDLING___________________________________ = 0
 
 def all_fits_files(top_directory, rel_directory, validate_fits=False):
     """  Return list of all FITS files in given directory_path.

@@ -123,11 +123,11 @@ def make_df_mpes(mp_list=None, site_dict=None, utc_start=None, hours=13, file_fu
         df_sub = make_df_mpes_one_page(mp_sublist, site_dict, utc_start, hours, file_fullpath)
         if i == 0:
             df_mpes = df_sub.copy()
-            print('START with', str(mp_list[i_min]), str(mp_list[i_max - 1]))
+            # print('START with', str(mp_list[i_min]), str(mp_list[i_max - 1]))
         else:
             df_mpes = df_mpes.append(df_sub)
-            print('         &', str(mp_list[i_min]), str(mp_list[i_max - 1]))
-    print('Finished.')
+            # print('         &', str(mp_list[i_min]), str(mp_list[i_max - 1]))
+    # print('Finished.')
     df_mpes.index = [i for i in range(len(df_mpes))]  # index is sequential integers, from zero.
     return df_mpes
 

@@ -760,11 +760,11 @@ class Ap:
         """ Calculate (x,y) centroid of background adjusted flux, in pixels of parent image.
          :return: centroid position of background-adjusted flux, in parent-image pixels (x,y).
                   [2-tuple of floats]
+        Yes, the conventions and polarities are non-intuitive, given numpy arrays' [y,x] indexing
+            as well as numpy.meshgrid()'s utterly AMBIGUOUS documentation of the identities of x and y,
+            as well as PyCharm SciView's incorrectly TRANSPOSED display of numpy arrays. Arrrgggghhh.
         """
-        # Yes, the conventions and polarities are non-intuitive, given numpy arrays' [y,x] indexing
-        #     as well as numpy.meshgrid()'s utterly AMBIGUOUS documentation of the identities of x and y,
-        #     as well as PyCharm SciView's incorrectly TRANSPOSED display of numpy arrays. Arrrgggghhh.
-
+        # Calculate x,y position of centroid:
         x_grid, y_grid = np.meshgrid(np.arange(self.shape[0]), np.arange(self.shape[1]))
         background_level, _ = calc_background_value(self.data, self.background_mask)
         data_minus_background = self.data - background_level
@@ -775,6 +775,18 @@ class Ap:
         data_sum = np.sum(data_minus_background, where=np.logical_not(self.foreground_mask))
         x_centroid = self.x_offset + (x_product_sum / data_sum)
         y_centroid = self.y_offset + (y_product_sum / data_sum)
+        # Calculate sigma & FWHM of flux:
+        # TODO: Add facility for shape sigma/FWHM (+++ can start with the very same net_product arrays).
+        # Will require a specially made 2-D Gaussian parent image (with known sigma), prob from
+        #     external library, e.g., photutils.datasets.make_gaussian_sources_image() etc.
+        dx = x_grid - x_centroid
+        dy = y_grid - y_centroid
+        dx2 = dx * dx
+        dy2 = dy * dy
+        dx2_product = dx2 * data_minus_background
+        dy2_product = dy2 * data_minus_background
+        # TODO: This 'sigma' may need to be multiplied by 1/2.
+        sigma = (dx2_product + dy2_product) / data_sum
         return x_centroid, y_centroid
 
     def net_flux(self, gain=1):
@@ -839,10 +851,13 @@ class PointSourceAp(Ap):
     """ Standard photometric aperture for stationary point source of light, esp. for a star.
         Always makes a circular foreground mask and an annular background mask, both centered on the
             given image coordinates of the point source.
+        (If we will need a background mask that bleeds to the cutout's edges rather than being restricted
+            to an annulus--for example, to work close to the parent image's edges, then that will
+            definitely require a new sibling class to this one so that recentering retains the mask shapes.)
     """
     # noinspection PyTypeChecker
     def __init__(self, parent, xy_center, foreground_radius, gap, background_width):
-        """
+        """ Main and probably sole constructor.
         :param parent:
         :param xy_center:
         :param foreground_radius: radial size of foreground around point source, in pixels. [float]
@@ -857,20 +872,17 @@ class PointSourceAp(Ap):
         self.background_width = background_width
         cutout_radius = int(ceil(self.foreground_radius + self.gap + self.background_width)) + 1
         cutout_size = 2 * cutout_radius + 1
-        cutout_shape = (cutout_size, cutout_size)
         self.x_offset, self.y_offset = calc_cutout_offsets(xy_center, cutout_radius)
         xy_cutout_center = xy_center[0] - self.x_offset, xy_center[1] - self.y_offset
+
         foreground_mask = make_circular_mask(mask_size=cutout_size, xy=xy_cutout_center,
                                              radius=self.foreground_radius)
-        if background_width is None:
-            background_mask = np.full(cutout_shape, True, dtype=np.bool)
-        else:
-            radius_inside = self.foreground_radius + gap
-            radius_outside = radius_inside + self.background_width
-            background_mask_center_disc = np.logical_not(make_circular_mask(cutout_size, xy_cutout_center,
-                                                                            radius_inside))
-            background_mask_outer_disc = make_circular_mask(cutout_size, xy_cutout_center, radius_outside)
-            background_mask = np.logical_or(background_mask_center_disc, background_mask_outer_disc)
+        radius_inside = self.foreground_radius + self.gap
+        radius_outside = radius_inside + self.background_width
+        background_mask_center_disc = np.logical_not(make_circular_mask(cutout_size, xy_cutout_center,
+                                                                        radius_inside))
+        background_mask_outer_disc = make_circular_mask(cutout_size, xy_cutout_center, radius_outside)
+        background_mask = np.logical_or(background_mask_center_disc, background_mask_outer_disc)
         super().__init__(parent, xy_center, cutout_radius, foreground_mask, background_mask)
 
     def make_new_object(self, new_xy_center):
@@ -884,10 +896,14 @@ class PointSourceAp(Ap):
 
 class MovingSourceAp(Ap):
     """ Elongated 'pill-shaped' photometric aperture for moving point source of light,
-        esp. for a minor planet/asteroid. """
+            esp. for a minor planet/asteroid.
+        (If we will need a background mask that bleeds to the cutout's edges rather than being restricted
+            to a (pill-shaped) annulus--for example, to work close to the parent image's edges, that will
+            definitely require a new sibling class to this one so that recentering retains the mask shapes.)
+        """
     # noinspection PyTypeChecker
     def __init__(self, parent, xy_start, xy_end, foreground_radius, gap, background_width):
-        """
+        """ Main and probably sole constructor.
         :param parent:
         :param xy_start:
         :param xy_end:
@@ -909,23 +925,18 @@ class MovingSourceAp(Ap):
         max_foreground_mask_span = max(foreground_mask_x_span, foreground_mask_y_span)
         cutout_radius = int(ceil(max_foreground_mask_span / 2 + gap + background_width)) + 1
         cutout_size = 2 * cutout_radius + 1
-        cutout_shape = (cutout_size, cutout_size)
         cutout_x_offset, cutout_y_offset = calc_cutout_offsets(xy_center, cutout_radius)
         xy_start_cutout = (xy_start[0] - cutout_x_offset, xy_start[1] - cutout_y_offset)
         xy_end_cutout = (xy_end[0] - cutout_x_offset, xy_end[1] - cutout_y_offset)
 
         foreground_mask = make_pill_mask(cutout_size, xy_start_cutout, xy_end_cutout, foreground_radius)
-
-        if background_width is None:
-            background_mask = np.full(cutout_shape, True, dtype=np.bool)
-        else:
-            radius_inside = self.foreground_radius + gap
-            radius_outside = radius_inside + self.background_width
-            background_mask_center_pill = np.logical_not(make_pill_mask(cutout_size, xy_start_cutout,
-                                                                        xy_end_cutout, radius_inside))
-            background_mask_outer_pill = make_pill_mask(cutout_size, xy_start_cutout,
-                                                        xy_end_cutout, radius_outside)
-            background_mask = np.logical_or(background_mask_center_pill, background_mask_outer_pill)
+        radius_inside = self.foreground_radius + gap
+        radius_outside = radius_inside + self.background_width
+        background_mask_center_pill = np.logical_not(make_pill_mask(cutout_size, xy_start_cutout,
+                                                                    xy_end_cutout, radius_inside))
+        background_mask_outer_pill = make_pill_mask(cutout_size, xy_start_cutout,
+                                                    xy_end_cutout, radius_outside)
+        background_mask = np.logical_or(background_mask_center_pill, background_mask_outer_pill)
         super().__init__(parent, xy_center, cutout_radius, foreground_mask, background_mask)
 
     def make_new_object(self, new_xy_center):
@@ -961,6 +972,7 @@ def make_circular_mask(mask_size, xy, radius):
     :param radius: radius of ends and half-width of center region. [float]
     :return: mask array, True -> VALID (opposite convention from numpy). [np.ndarray of booleans]
     """
+    # TODO: use numpy .meshgrid() with pre-calculated axes, remove .fromfunction() calls.
     x0, y0 = xy
     new_mask = np.fromfunction(lambda i, j: ((j - x0) ** 2 + (i - y0) ** 2) > radius ** 2,
                                shape=(mask_size, mask_size))  # nb: True masks out, as numpy.
@@ -977,6 +989,7 @@ def make_pill_mask(mask_size, xya, xyb, radius):
     :param radius: radius of ends and half-width of center region. [float]
     :return: mask array, True -> VALID (opposite convention from numpy). [np.ndarray of booleans]
     """
+    # TODO: use numpy .meshgrid() with pre-calculated axes, remove .fromfunction() calls.
     xa, ya = tuple(xya)
     xb, yb = tuple(xyb)
     dx = xb - xa
@@ -1029,48 +1042,62 @@ def distance_to_line(xy_pt, xy_a, xy_b, dist_ab=None):
     return distance
 
 
-def calc_background_value(data, mask=None):
+def calc_background_value(data, mask=None, dilate_size=3):
     """ Calculate the sigma-clipped median value of a (possibly masked) data array.
     :param data: array of pixels. [2-D ndarray of floats]
     :param mask: mask array, True=masked, i.e., use only False pixels. [None, or 2-D nadarray of bool]
+    :param dilate_size: the number of pixels out from a detected outlier pixels to also mask.
+        If sample is heavily undersampled (e.g., FWHM < 3 pixels), one might try 1-2 pixels.
+        If image is heavily oversampled (e.g., FWHM > 10-15 pixels), one might increase this
+        to perhaps 0.25-0.5 FWHM. [int]
     :return: tuple of background adu level (flux per pixel), standard deviation within used pixels.
                  [2-tuple of floats]
     """
     if mask is None:  # use all pixels.
-        this_mask = np.full_like(data, False, dtype=np.float)
+        this_mask = np.full_like(data, False, dtype=np.bool)
     elif mask.shape != data.shape:  # bad mask shape.
         return None
     elif np.sum(mask == False) == 0:  # no valid pixels.
         return 0.0, 0.0
     else:
         this_mask = mask.copy()
-
-    source_mask = make_source_mask(data, mask=this_mask, nsigma=2, npixels=5, filter_fwhm=2, dilate_size=11)
-    _, median, std = sigma_clipped_stats(data, sigma=3.0, mask=source_mask)
+    # this_mask: user-supplied mask of pixels simply not to consider at all.
+    # source_mask: masks out detected light-source pixels. MAY INCLUDE pixels masked out by this_mask!
+    # stats_mask: the intersection of valid pixels from this_mask and source_mask.
+    # npixels = 2, which will mask out practically all cosmic ray hits.
+    # filter_fwhm=2, small enough to still capture cosmic ray hits, etc.
+    #     (make_source_mask() will probably fail if fwhm < 2.)
+    # dilate_size=3, small enough to preserve most background pixels, but user may override.
+    source_mask = make_source_mask(data, mask=this_mask, nsigma=2, npixels=5,
+                                   filter_fwhm=2, dilate_size=int(dilate_size))
+    stats_mask = np.logical_or(this_mask, source_mask)
+    _, median, std = sigma_clipped_stats(data, sigma=3.0, mask=stats_mask)
     return median, std
 
 
+_____FITS_FILE_HANDLING_______________________________________________ = 0
 
-_____FITS_FILE_HANDLING______________________________________________ = 0
 
-def all_fits_files(top_directory, rel_directory, validate_fits=False):
-    """  Return list of all FITS files in given directory_path.
+def all_fits_filenames(top_directory, rel_directory, validate_fits=False):
+    """  Return list of all FITS filenames (name.extension; no directory info) in given directory_path.
          (Code for this exists already, somewhere.)
     :param top_directory:
     :param rel_directory:
     :param validate_fits: If True, open FITS files and include only if valid.
         If False, include filename if it appears valid without opening the FITS file.
-    :return: List of all FITS files in given directory_path [list of strings]
+    :return: List of all FITS filenames in given directory_path [list of strings]
     """
     # TODO: write all_fits_files().
     pass
 
 
-def bounding_box_all_fits_files(top_directory, rel_directory):
+def bounding_box_all_fits_files(top_directory, rel_directory, percent_extension=3):
     """ Return a RA,Dec bounding box that covers *all* FITS files in a given directory.
         (Calls all_fits_files(), then iterates through files with FITS.bounding_ra_dec().)
     :param top_directory:
     :param rel_directory:
+    :param percent_extension: user-desired percentage of each dimension that FITS bounding box is extended,
+               to ensure that non-linear plate-solution problems etc. are covered. [float]
     :return:
     """
     # TODO: write bounding_box_all_fits_files().

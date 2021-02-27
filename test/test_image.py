@@ -20,6 +20,9 @@ THIS_PACKAGE_ROOT_DIRECTORY = os.path.dirname(os.path.dirname(os.path.abspath(__
 TEST_TOP_DIRECTORY = os.path.join(THIS_PACKAGE_ROOT_DIRECTORY, "test")
 
 
+_____Test_LEGACY_CLASSES______________________________________________ = 0
+
+
 def test_class_fits():
     test_rel_directory = '$data_for_test'
 
@@ -297,262 +300,37 @@ def test_make_pill_mask():  # OK 2021-01-28.
 
 
 def test_calc_background_value():
-    fullpath = os.path.join(TEST_TOP_DIRECTORY, '$data_for_test', 'CE Aur-0001-V.fts')
-    hdu0 = apyfits.open(fullpath)[0]
-    im = hdu0.data
+    # Test simple case, no excluded pixels, no mask:
+    im, _ = np.meshgrid(np.arange(10), np.arange(12))
+    im = im.copy()
+    median, std = image.calc_background_value(im)
+    assert median == 4.5
+    assert std == pytest.approx(2.872, abs=0.005)
 
-    data = im.image[1218:1268, 1451:1501]  # nb: (y,x) per numpy.
-    # TODO: Add tests here.
-    #  mask = None
+    # Test simple case, no mask:
+    im[5, 3:7] = 40  # outlier pixels.
+    median, std = image.calc_background_value(im)
+    assert median == 4.0
+    assert std == pytest.approx(3.136, abs=0.005)
+
+    # Test with added mask:
+    mask = np.array(im <= 1.0)
+    median, std = image.calc_background_value(im, mask)
+    assert median == 6.0
+    assert std == pytest.approx(2.445, abs=0.005)
+
+    # Test uniform pixel (problematic) case:
+    im = np.full(shape=(10, 20), fill_value=7, dtype=np.float).copy()
+    median, std = image.calc_background_value(im)
+    assert median == 7.0
+    assert std == 0.0
+
+    # Ensure dilate_size default, and that it gets used as an integer:
+    assert image.calc_background_value(im) == \
+           image.calc_background_value(im, dilate_size=3) == \
+           image.calc_background_value(im, dilate_size=3.3)
 
 
-# def test_class_cutout_constructors():
-#     # Rewritten 2021-01-30 for new two-mask version.
-#     # Setup:
-#     fullpath = os.path.join(TEST_TOP_DIRECTORY, '$data_for_test', 'CE Aur-0001-V.fts')
-#     hdu0 = apyfits.open(fullpath)[0]
-#     im = hdu0.data
-#
-#     # Test main constructor without masks:
-#     c = image.Cutout(im, (1476.3, 1243.7), 25.2)
-#     assert c.is_valid
-#     assert c.xy_center == (1476.3, 1243.7)
-#     assert c.input_radius == 25.2
-#     assert c.input_foreground_mask is None
-#     assert c.input_background_mask is None
-#     assert c.messages == []
-#     assert c.is_pristine == True
-#     assert c.is_valid == True
-#     assert c.is_all_within_parent == True
-#     assert c.x_cutout_center == 1476
-#     assert c.y_cutout_center == 1244
-#     assert c.radius == 26
-#     assert c.parent.shape == im.shape
-#     assert c.x_raw_low == c.x_offset == 1450
-#     assert c.x_raw_high == 1502
-#     assert c.y_raw_low == c.y_offset == 1218
-#     assert c.y_raw_high == 1270
-#     assert c.shape == (53, 53)
-#     assert np.max(c.data) == 1065
-#     assert np.min(c.data) == 208
-#     assert np.sum(c.data) == 754230
-#     assert c.foreground_mask.shape == c.shape
-#     assert c.background_mask.shape == c.shape
-#     assert c.pixel_count == 53 * 53
-#     assert c.foreground_pixel_count == c.pixel_count
-#     assert c.background_pixel_count == 0
-#     assert c.mask_overlap_pixel_count == 0
-#     assert np.array_equal(c.foreground_mask, np.full_like(c.data, False, dtype=np.bool))
-#     assert np.array_equal(c.background_mask, np.full_like(c.data, True, dtype=np.bool))
-#     del c
-#
-#     # Test constructor with: explicit cutout-shaped foreground mask, no background mask:
-#     c = image.Cutout(im, (1476.3, 1243.7), 25.2)  # no masks given.
-#     fg_mask = np.full_like(c.data, True, dtype=np.bool)
-#     fg_mask[2, 3] = False
-#     cm = image.Cutout(im, (1476.3, 1243.7), 25.2, foreground_mask=fg_mask)
-#     assert cm.is_pristine == True
-#     assert cm.is_valid == True
-#     assert cm.foreground_mask.shape == cm.background_mask.shape == cm.shape
-#     assert np.array_equal(cm.foreground_mask, fg_mask)
-#     expected_bg_mask = np.logical_not(cm.foreground_mask)
-#     assert np.array_equal(cm.background_mask, expected_bg_mask)
-#     del c, cm
-#
-#     # Test constructor with: explicit cutout-shaped foreground mask and background mask:
-#     c = image.Cutout(im, (1476.3, 1243.7), 25.2)  # no masks given.
-#     fg_mask = np.full_like(c.data, True, dtype=np.bool)
-#     fg_mask[2, 3] = False
-#     bg_mask = np.full_like(c.data, True, dtype=np.bool)
-#     bg_mask[5, 4] = False
-#     cmm = image.Cutout(im, (1476.3, 1243.7), 25.2, foreground_mask=fg_mask, background_mask=bg_mask)
-#     assert cmm.is_pristine == True
-#     assert cmm.is_valid == True
-#     assert cmm.foreground_mask.shape == cmm.background_mask.shape == cmm.shape
-#     assert np.array_equal(cmm.foreground_mask, fg_mask)
-#     assert np.array_equal(cmm.background_mask, bg_mask)
-#     del c, cmm
-#
-#     # Test constructor with: explicit parent(image)-shaped foreground mask, no background mask:
-#     c = image.Cutout(im, (1476.3, 1243.7), 25.2)  # no masks given.
-#     fg_mask = np.full_like(im, True, dtype=np.bool)
-#     fg_mask[1240, 1479] = False  # [y, x] per numpy
-#     cp = image.Cutout(im, (1476.3, 1243.7), 25.2, foreground_mask=fg_mask)
-#     assert cp.is_pristine == True
-#     assert cp.is_valid == True
-#     assert cp.foreground_mask.shape == cp.background_mask.shape == cp.shape
-#     assert np.sum(cp.foreground_mask) == cp.background_mask.size - 1
-#     assert cp.foreground_mask[22, 29] == False  # [y, x] per numpy
-#     expected_bg_mask = np.logical_not(cp.foreground_mask)
-#     assert np.array_equal(cp.background_mask, expected_bg_mask)
-#     del c, cp
-#
-#     # Test constructor with: explicit parent(image)-shaped foreground mask and background mask:
-#     c = image.Cutout(im, (1476.3, 1243.7), 25.2)  # no masks given.
-#     fg_mask = np.full_like(im, True, dtype=np.bool)
-#     fg_mask[1240, 1479] = False  # [y, x] per numpy
-#     bg_mask = np.full_like(im, True, dtype=np.bool)
-#     bg_mask[1244, 1474] = False
-#     cpp = image.Cutout(im, (1476.3, 1243.7), 25.2, foreground_mask=fg_mask, background_mask=bg_mask)
-#     assert cpp.is_pristine == True
-#     assert cpp.is_valid == True
-#     assert cpp.foreground_mask.shape == cpp.background_mask.shape == cpp.shape
-#     assert np.sum(cpp.foreground_mask) == cpp.foreground_mask.size - 1
-#     assert np.sum(cpp.background_mask) == cpp.background_mask.size - 1
-#     assert cpp.foreground_mask[22, 29] == False  # [y, x] per numpy
-#     assert cpp.background_mask[26, 24] == False  # [y, x] per numpy
-#     del c, cpp
-#
-#     # Test constructor with: circular mask and mask radius:
-#     ccr = image.Cutout.circular_mask_and_radius(im, (1476.3, 1243.3), cutout_radius=25.2,
-#                                                 foreground_mask_radius=10.7, gap=2)
-#     assert ccr.is_valid
-#     assert ccr.is_pristine
-#     assert ccr.xy_center == (1476.3, 1243.3)
-#     assert ccr.radius == 26
-#     assert ccr.x_raw_low == ccr.x_offset == 1450
-#     assert ccr.x_raw_high == 1502
-#     assert ccr.y_raw_low == ccr.y_offset == 1217
-#     assert ccr.y_raw_high == 1269
-#     assert ccr.shape == (53, 53)
-#     assert ccr.x_cutout_center == 1476
-#     assert ccr.y_cutout_center == 1243
-#     assert isinstance(ccr.foreground_mask, np.ndarray)
-#     assert isinstance(ccr.background_mask, np.ndarray)
-#     assert np.sum(ccr.foreground_mask) == 2452
-#     assert np.sum(ccr.background_mask) == 504
-#     del ccr
-#
-#     # Test constructor with: circular mask and margin:
-#     ccm = image.Cutout.circular_mask_and_margin(im, (1476.3, 1243.3), margin=9,
-#                                                 foreground_mask_radius=10.7, gap=2)
-#     assert ccm.is_valid
-#     assert ccm.data.shape == (45, 45)
-#     assert ccm.xy_center == (1476.3, 1243.3)
-#     assert ccm.x_raw_low == ccm.x_offset == 1454
-#     assert ccm.x_raw_high == 1498
-#     assert ccm.y_raw_low == ccm.y_offset == 1221
-#     assert ccm.y_raw_high == 1265
-#     assert isinstance(ccm.foreground_mask, np.ndarray)
-#     assert isinstance(ccm.background_mask, np.ndarray)
-#     assert np.sum(ccm.foreground_mask) == 1668
-#     assert np.sum(ccm.background_mask) == 504
-#     del ccm
-#
-#     # Test constructor with: pill mask and radius, no gap:
-#     cpr = image.Cutout.pill_mask_and_radius(im, xy_start=(1474.3, 1241.3), xy_end=(1478.3, 1245.3),
-#                                             cutout_radius=25.2, foreground_mask_radius=10.7)  # so, gap=0
-#     assert cpr.is_valid
-#     assert cpr.is_pristine
-#     assert cpr.data.shape == (53, 53)
-#     assert cpr.xy_center == (1476.3, 1243.3)
-#     assert cpr.x_raw_low == cpr.x_offset == 1450
-#     assert cpr.x_raw_high == 1502
-#     assert cpr.y_raw_low == cpr.y_offset == 1217
-#     assert cpr.y_raw_high == 1269
-#     assert isinstance(cpr.foreground_mask, np.ndarray)
-#     assert isinstance(cpr.background_mask, np.ndarray)
-#     assert np.sum(cpr.foreground_pixel_count) == cpr.data.shape[0]**2 - np.sum(cpr.foreground_mask) == 481
-#     assert np.sum(cpr.background_pixel_count) == cpr.data.shape[0]**2 - np.sum(cpr.background_mask) == 2328
-#     assert np.array_equal(cpr.background_mask, np.logical_not(cpr.foreground_mask))
-#     del cpr
-#
-#     # Test constructor with: pill mask and radius, user-supplied gap:
-#     cpr2 = image.Cutout.pill_mask_and_radius(im, xy_start=(1474.3, 1241.3), xy_end=(1478.3, 1245.3),
-#                                              cutout_radius=25.2, foreground_mask_radius=10.7, gap=2)
-#     assert cpr2.is_valid
-#     assert cpr2.is_pristine
-#     assert cpr2.data.shape == (53, 53)
-#     assert cpr2.x_raw_low == cpr2.x_offset == 1450
-#     assert cpr2.x_raw_high == 1502
-#     assert cpr2.y_raw_low == cpr2.y_offset == 1217
-#     assert cpr2.y_raw_high == 1269
-#     assert isinstance(cpr2.foreground_mask, np.ndarray)
-#     assert isinstance(cpr2.background_mask, np.ndarray)
-#     assert cpr2.foreground_pixel_count == cpr2.data.shape[0]**2 - np.sum(cpr2.foreground_mask) == 481
-#     assert cpr2.background_pixel_count == cpr2.data.shape[0]**2 - np.sum(cpr2.background_mask) == 2165
-#     assert not np.array_equal(cpr2.background_mask, np.logical_not(cpr2.foreground_mask))
-#     del cpr2
-#
-#     # Test constructor with: pill mask and margin:
-#     cpm = image.Cutout.pill_mask_and_margin(im, (1474.3, 1241.3), (1478.3, 1245.3), margin=9.1,
-#                                             foreground_mask_radius=10.7, gap=2)
-#     assert cpm.is_valid
-#     assert cpm.is_pristine
-#     assert cpm.data.shape == (49, 49)
-#     assert cpm.x_raw_low == cpm.x_offset == 1452
-#     assert cpm.x_raw_high == 1500
-#     assert cpm.y_raw_low == cpm.y_offset == 1219
-#     assert cpm.y_raw_high == 1267
-#     assert isinstance(cpm.foreground_mask, np.ndarray)
-#     assert isinstance(cpm.background_mask, np.ndarray)
-#     assert cpm.foreground_pixel_count == cpm.data.shape[0]**2 - np.sum(cpm.foreground_mask) == 481
-#     assert cpm.background_pixel_count == cpm.data.shape[0]**2 - np.sum(cpm.background_mask) == 1757
-#     assert not np.array_equal(cpm.background_mask, np.logical_not(cpm.foreground_mask))
-#     del cpm
-#
-#
-# def test_class_cutout_flux():
-#     # Setup:
-#     fullpath = os.path.join(TEST_TOP_DIRECTORY, '$data_for_test', 'CE Aur-0001-V.fts')
-#     hdu0 = apyfits.open(fullpath)[0]
-#     im = hdu0.data
-#
-#     c = image.Cutout.circular_mask_and_radius(im, (1476, 1243), cutout_radius=25,
-#                                               foreground_mask_radius=10, gap=6)
-#     flux, flux_stddev, sky, sky_stddev = c.flux(use_foreground_mask=True, use_background_mask=True,
-#                                                 gain=1.57)  # NORMAL aperture photometry case.
-#     assert flux == pytest.approx(31481, abs=10)
-#     assert flux_stddev == pytest.approx(268.3, abs=1)
-#     assert sky == pytest.approx(257, abs=1)
-#     assert sky_stddev == pytest.approx(14.02, 0.05)
-#
-#     flux, flux_stddev, sky, sky_stddev = c.flux(use_foreground_mask=True, use_background_mask=False,
-#                                                 gain=1.57)  # RARE ap. photometry w/o backgd subtraction.
-#     assert flux == pytest.approx(112950, abs=10)
-#     assert flux_stddev == pytest.approx(268.2, abs=1)
-#     assert sky == 0.0
-#     assert sky_stddev == 0.0
-#
-#     flux, flux_stddev, sky, sky_stddev = c.flux(use_foreground_mask=False, use_background_mask=True,
-#                                                 gain=1.57)  # ABNORMAL case.
-#     assert flux == pytest.approx(619349, abs=10)
-#     assert flux_stddev == pytest.approx(668.1, abs=1)
-#     assert sky == pytest.approx(257, abs=1)
-#     assert sky_stddev == pytest.approx(14.02, 0.05)
-#
-#     flux, flux_stddev, sky, sky_stddev = c.flux(use_foreground_mask=False, use_background_mask=False,
-#                                                 gain=1.57)  # simple ADU sum over entire Cutout.
-#     assert flux == pytest.approx(700818, abs=10)
-#     assert flux_stddev == pytest.approx(668.1, abs=1)
-#     assert sky == 0.0
-#     assert sky_stddev == 0.0
-#
-#
-# def test_class_cutout_calc_centroid():
-#     # Setup:
-#     fullpath = os.path.join(TEST_TOP_DIRECTORY, '$data_for_test', 'CE Aur-0001-V.fts')
-#     hdu0 = apyfits.open(fullpath)[0]
-#     im = hdu0.data
-#
-#     # ========== Test .calc_centroid():
-#     # Case: cutout centered very near source centroid:
-#     cc = image.Cutout.circular_mask_and_radius(im, (1476, 1243), cutout_radius=25,
-#                                                foreground_mask_radius=10, gap=6)
-#     assert cc.is_valid
-#     assert cc.xy_center == (1476, 1243)
-#     x_centroid, y_centroid = cc.xy_centroid
-#     assert x_centroid == pytest.approx(1476.254, abs=0.005)
-#     assert y_centroid == pytest.approx(1243.278, abs=0.005)
-#
-#     # Case: cutout centered a few pixels from source centroid:
-#     cc2 = image.Cutout.circular_mask_and_radius(im, (1480, 1247), cutout_radius=20,
-#                                                 foreground_mask_radius=10, gap=6)
-#     assert cc2.is_valid
-#     assert cc2.xy_center == (1480, 1247)
-#     x_centroid, y_centroid = cc2.xy_centroid
-#     assert x_centroid == pytest.approx(1476.58, abs=0.1)
-#     assert y_centroid == pytest.approx(1243.54, abs=0.1)
 
 _____Test_AP_CLASS_and_related_classes___________________________________ = 0
 
@@ -629,6 +407,7 @@ def test_class_ap():
 
 def test_class_ap_net_flux():
     """ Test Ap.net_flux(). """
+    # TODO: adjust this for new .calc_background_value():
     ap = make_standard_ap_object()
     background_adjusted_flux, flux_stddev, background_level, background_stddev = ap.net_flux(gain=1.57)
     assert background_adjusted_flux == pytest.approx(31481, abs=2)
@@ -639,6 +418,7 @@ def test_class_ap_net_flux():
 
 def test_class_ap_centroid():
     """ Test Ap class centroid facility. """
+    # TODO: adjust this for new .calc_background_value():
     ap = make_offcenter_ap_object()
     x_centroid, y_centroid = ap.xy_centroid
     assert x_centroid == pytest.approx(1476.022, abs=0.005)
@@ -687,8 +467,8 @@ def test_class_pointsourceap():
     im, hdr = get_test_image()
 
     # Test constructor with all parms specified:
-    c = image.PointSourceAp(im, xy_center=(1476, 1243), foreground_radius=10, gap=6,
-                            background_width=5)
+    # TODO: adjust this for new .calc_background_value():
+    c = image.PointSourceAp(im, xy_center=(1476, 1243), foreground_radius=10, gap=6, background_width=5)
     assert c.foreground_pixel_count == 317
     assert c.background_pixel_count == 576
     x_centroid, y_centroid = c.xy_centroid
@@ -751,3 +531,25 @@ def make_offcenter_ap_object():
     xy_center = 1473, 1247  # a few pixels from flux centroid.
     return make_test_ap_object(xy_center)
 
+
+def test_make_gaussian_ap_object():
+    """ So that we don't have to keep making this over and over; so that we have a standard object
+        against which to test.
+    :return: standard 2-D gaussian test object with concentric circular masks. [Ap class object]
+    """
+    from astropy.table import Table
+    table = Table()
+    table['amplitude'] = [100]
+    table['x_mean'] = [25]
+    table['y_mean'] = [25]
+    table['x_stddev'] = [2]
+    table['y_stddev'] = [2]
+    table['theta'] = np.radians(np.array([0.]))
+    from photutils.datasets import make_gaussian_sources_image
+    shape = (100, 100)
+    parent = make_gaussian_sources_image(shape, table)
+    ap = image.PointSourceAp(parent, (25, 25), 10, 6, 5)
+    from photutils.morphology import data_properties
+    from photutils.segmentation import SourceProperties
+    dp = data_properties(ap.data, ap.foreground_mask)
+    return ap

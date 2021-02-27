@@ -337,6 +337,7 @@ def try_lcdb(mp_number=4954, site_dict=None, utc_start='2020-11-02', file_fullpa
 
 _____LCDB_COLOR_INDEX_DATABASE______________________________ = 0
 
+
 class LCDB_Colors:
     """ Contains data from one LCDB Color Index file (probably named LC_COLORINDEX_PUB.TXT) as downloaded
         from minorplanet.info (their current DB).

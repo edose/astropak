@@ -4,6 +4,8 @@ from collections import namedtuple
 import numbers
 from math import sqrt, atan2, pi
 
+import numpy as np
+
 
 class XY(namedtuple('XY', ['x', 'y'])):
     """ Holds one Cartesian point (x,y) in a plane.
@@ -133,6 +135,105 @@ class DXY(namedtuple('DXY', ['dx', 'dy'])):
         return 0.0
 
 
+class Rectangle_in_2D:
+    """ Contains one rectangle in a 2-D Cartesian plane. """
+    def __init__(self, xy_a, xy_b, xy_c):
+        """
+        :param xy_a: a vertex of rectangle. [XY object]
+        :param xy_b: a vertex of rectangle, adjacent to xy_a. [XY object]
+        :param xy_c: a vertex of rectangle, adjacent to xy_b and opposite xy_a. [XY object]
+        """
+        self.a, self.b, self.c = (xy_a, xy_b, xy_c)
+        self.ab, self.bc = (self.b - self.a, self.c - self.b)
+        if abs(self.ab.dot(self.bc)) > 1e-10 * min(self.ab.length, self.bc.length):
+            raise ValueError('Rectangle_in_2D edges are not perpendicular.')
+
+    @property
+    def area(self):
+        """ Return area of rectangle. """
+        return self.ab.length * self.bc.length
+
+    def contains_point(self, xy, include_edges=True):
+        """ Returns True iff this rectangle contains point xy, else return False.
+        :param xy: point to test. [XY object]
+        :param include_edges: True iff a point on rectangle edge is to count as contained. [boolean]
+        :return: True iff this rectangle contains point xy, else return False. [boolean]
+        """
+        dot_ab = self.ab.length2  # reflexive dot product.
+        dot_bc = self.bc.length2  # "
+        dot_ab_pt = self.ab.dot(xy - self.a)
+        dot_bc_pt = self.bc.dot(xy - self.b)
+        if include_edges:
+            return (0 <= dot_ab_pt <= dot_ab) and (0 <= dot_bc_pt <= dot_bc)
+        return (0 < dot_ab_pt < dot_ab) and (0 < dot_bc_pt < dot_bc)
+
+    def contains_points(self, xy_array, include_edges=True):
+        """ Returns True for each corresponding point in xy_array iff this rectangle contains that point,
+            else return False. General case.
+        :param xy_array: points to test, in arbitrary position and ordering. [list or tuple of XY objects]
+        :param include_edges: True iff a point on rectangle edge is to count as contained. [boolean]
+        :return: List of booleans corresponding to xy_array, each element True iff this rectangle contains
+                 that point, else False. [list of boolean, same length as xy_array]
+        """
+        dot_ab = self.ab.length2  # reflexive dot product, compute only once for array.
+        dot_bc = self.bc.length2  # "
+        dot_ab_array = [self.ab.dot(pt - self.a) for pt in xy_array]
+        dot_bc_array = [self.bc.dot(pt - self.b) for pt in xy_array]
+        if include_edges:
+            return[(0 <= dot_a_pt <= dot_ab) and (0 <= dot_b_pt <= dot_bc)
+                   for (dot_a_pt, dot_b_pt) in zip(dot_ab_array, dot_bc_array)]
+        return[(0 < dot_a_pt < dot_ab) and (0 < dot_b_pt < dot_bc)
+               for (dot_a_pt, dot_b_pt) in zip(dot_ab_array, dot_bc_array)]
+
+    def contains_points_unitgrid(self, x_min, x_max, y_min, y_max, include_edges=True):
+        """ Returns True for each point in a unit grid iff this rectangle contains that point,
+            else return False. Numpy-optimized case.
+            Unit grid x: x_min, x_min+1, x_min+2, ... , x_max. Same for y. All 4 values must be integers.
+        :param x_min: [integer]
+        :param x_max: must >= x_min. [integer]
+        :param y_min: [integer]
+        :param y_max: must >= y_min. [integer]
+        :param include_edges: True iff a point on rectangle edge is to count as contained. [boolean]
+        :return: array, True iff each corresponding point is inside rectangle. [numpy array of booleans]
+        """
+        if any(not isinstance(val, int) for val in (x_min, x_max, y_min, y_max)):
+            raise ValueError('All 4 grid points must be integers but are not.')
+        if x_max < x_min or y_max < y_min:
+            raise ValueError('Grid point specifications must be in ascending order.')
+        dot_aa = self.a.length2  # reflexive dot product, compute only once for array.
+        dot_bb = self.b.length2  # "
+        x, y = np.meshgrid(range(x_min, x_max + 1), range(y_min, y_max + 1))
+        dot_a_xy = self.a.x * x + self.a.y * y  # array of a dot products.
+        dot_b_xy = self.b.x * x + self.b.y * y  # array of b "
+        if include_edges:
+            return (0 <= dot_a_xy <= dot_aa) and (0 <= dot_b_xy <= dot_bb)
+        return (0 < dot_a_xy < dot_aa) and (0 < dot_b_xy < dot_bb)
 
 
+class Circle_in_2D:
+    """ Contains one circle in a 2-D Cartesian plane. """
+    def __init__(self, xy_origin, radius):
+        """
+        :param xy_origin: x,y origin of circle. [XY object]
+        :param radius: [float]
+        """
+        self.origin = xy_origin
+        self.radius = radius
+        self.x, self.y = (self.origin.x, self.origin.y)
+
+    @property
+    def area(self):
+        """ Return area of this circle. """
+        return pi * (self.radius ** 2)
+
+    def contains_point(self, xy, include_edges=True):
+        """ Returns True iff this circle contains point xy, else return False.
+        :param xy: point to test. [XY object]
+        :param include_edges: True iff a point on circle edge is to count as contained. [boolean]
+        :return: True iff this circle contains point xy, else return False. [boolean]
+        """
+        distance2 = (xy - self.origin).length2
+        if include_edges:
+            return distance2 <= self.radius ** 2
+        return distance2 < self.radius ** 2
 

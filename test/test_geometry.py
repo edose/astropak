@@ -144,5 +144,66 @@ class Test_ClassDXY:
         assert geom.DXY(-2, 5)
 
 
+@pytest.fixture(scope='function')
+def setup_rectangle_in_2d():
+    # A(5,0) B(0,2) C(1,5) and D(6,3)
+    rect_pt_a = geom.XY(5, 0)
+    rect_pt_b = geom.XY(0, 2)
+    rect_pt_c = geom.XY(1, 4.5)
+    return geom.Rectangle_in_2D(rect_pt_a, rect_pt_b, rect_pt_c)
+
+
+class Test_Rectangle_in_2D:
+    def test_constructor(self, setup_rectangle_in_2d):
+        rect = setup_rectangle_in_2d
+        assert (rect.a, rect.b, rect.c) == (geom.XY(5, 0), geom.XY(0, 2), geom.XY(1, 4.5))
+        assert rect.ab == geom.DXY(-5, 2)
+        assert rect.bc == geom.DXY(1, 2.5)
+        bad_pt_c = geom.XY(1, 4.49)
+        with pytest.raises(ValueError):
+            _ = geom.Rectangle_in_2D(rect.a, rect.b, bad_pt_c)
+
+    def test_properties(self, setup_rectangle_in_2d):
+        rect = setup_rectangle_in_2d
+        assert rect.area == pytest.approx(sqrt(29) * sqrt(10), abs=0.000001)
+
+    def test_contains_point(self, setup_rectangle_in_2d):
+        rect = setup_rectangle_in_2d
+        assert rect.contains_point(geom.XY(5.49, 1.25)) is True
+        assert rect.contains_point(geom.XY(5.51, 1.25)) is False
+        assert rect.contains_point(geom.XY(3.5, 3.49)) is True
+        assert rect.contains_point(geom.XY(3.5, 3.51)) is False
+        assert rect.contains_point(geom.XY(1, 4.49)) is True
+        assert rect.contains_point(geom.XY(1, 4.51)) is False
+        assert rect.contains_point(geom.XY(3, 2.25)) is True
+        assert rect.contains_point(geom.XY(100, 100)) is False
+        pts_on_edge = [rect.a, rect.b, rect.c,
+                       geom.XY(2.5, 1),
+                       geom.XY(0.5, 3.25),
+                       geom.XY(3.5, 3.5),
+                       geom.XY(5.5, 1.25)]
+        assert all([rect.contains_point(pt, include_edges=True) for pt in pts_on_edge])
+        assert not any([rect.contains_point(pt, include_edges=False) for pt in pts_on_edge])
+
+    def test_contains_points(self, setup_rectangle_in_2d):
+        rect = setup_rectangle_in_2d
+        xy_array = (geom.XY(5.49, 1.25),
+                    geom.XY(5.51, 1.25),
+                    geom.XY(3.5, 3.49),
+                    geom.XY(3.5, 3.51),
+                    geom.XY(1, 4.49),
+                    geom.XY(1, 4.51),
+                    geom.XY(3, 2.25),
+                    geom.XY(100, 100))
+        contains = rect.contains_points(xy_array)
+        assert contains == 4 * [True, False]
+
+    def test_contains_points_unitgrid(self, setup_rectangle_in_2d):
+        rect = setup_rectangle_in_2d
+        pass
+
+
+
+
 
 

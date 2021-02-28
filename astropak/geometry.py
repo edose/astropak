@@ -194,20 +194,21 @@ class Rectangle_in_2D:
         :param y_min: [integer]
         :param y_max: must >= y_min. [integer]
         :param include_edges: True iff a point on rectangle edge is to count as contained. [boolean]
-        :return: array, True iff each corresponding point is inside rectangle. [numpy array of booleans]
+        :return: array, True iff each corresponding point is contained by rectangle.
+                 [numpy array of booleans]
         """
         if any(not isinstance(val, int) for val in (x_min, x_max, y_min, y_max)):
-            raise ValueError('All 4 grid points must be integers but are not.')
+            raise TypeError('All 4 grid edges must be integers but are not.')
         if x_max < x_min or y_max < y_min:
             raise ValueError('Grid point specifications must be in ascending order.')
-        dot_aa = self.a.length2  # reflexive dot product, compute only once for array.
-        dot_bb = self.b.length2  # "
+        dot_ab = self.ab.length2  # reflexive dot product, precompute once for array.
+        dot_bc = self.bc.length2  # "
         x, y = np.meshgrid(range(x_min, x_max + 1), range(y_min, y_max + 1))
-        dot_a_xy = self.a.x * x + self.a.y * y  # array of a dot products.
-        dot_b_xy = self.b.x * x + self.b.y * y  # array of b "
+        dot_ab_xy = self.ab.dx * (x - self.a.x) + self.ab.dy * (y - self.a.y)  # grid of a dot products.
+        dot_bc_xy = self.bc.dx * (x - self.b.x) + self.bc.dy * (y - self.b.y)  # grid of b "
         if include_edges:
-            return (0 <= dot_a_xy <= dot_aa) and (0 <= dot_b_xy <= dot_bb)
-        return (0 < dot_a_xy < dot_aa) and (0 < dot_b_xy < dot_bb)
+            return (0 <= dot_ab_xy) & (dot_ab_xy <= dot_ab) & (0 <= dot_bc_xy) & (dot_bc_xy <= dot_bc)
+        return (0 < dot_ab_xy) & (dot_ab_xy < dot_ab) & (0 < dot_bc_xy) & (dot_bc_xy < dot_bc)
 
 
 class Circle_in_2D:
@@ -219,6 +220,8 @@ class Circle_in_2D:
         """
         self.origin = xy_origin
         self.radius = radius
+        if not isinstance(self.origin, XY):
+            raise TypeError('Circle origin must be a XY object')
         self.x, self.y = (self.origin.x, self.origin.y)
 
     @property
@@ -236,4 +239,40 @@ class Circle_in_2D:
         if include_edges:
             return distance2 <= self.radius ** 2
         return distance2 < self.radius ** 2
+
+    def contains_points(self, xy_array, include_edges=True):
+        """ Returns True for each corresponding point in xy_array iff this circle contains that point,
+            else return False. General case.
+        :param xy_array: points to test, in arbitrary position and ordering. [list or tuple of XY objects]
+        :param include_edges: True iff a point on circle edge is to count as contained. [boolean]
+        :return: List of booleans corresponding to xy_array, each element True iff this circle contains
+        that point, else False. [list of booleans, same length as xy_array]
+        """
+        distances2 = [(xy - self.origin).length2 for xy in xy_array]
+        if include_edges:
+            return [distance2 <= self.radius ** 2 for distance2 in distances2]
+        return [distance2 < self.radius ** 2 for distance2 in distances2]
+
+    def contains_points_unitgrid(self, x_min, x_max, y_min, y_max, include_edges=True):
+        """ Returns True for each point in a unit grid iff this circle contains that point,
+            else return False. Numpy-optimized case.
+            Unit grid x: x_min, x_min+1, x_min+2, ... , x_max. Same for y. All 4 values must be integers.
+        :param x_min: [integer]
+        :param x_max: must >= x_min. [integer]
+        :param y_min: [integer]
+        :param y_max: must >= y_min. [integer]
+        :param include_edges: True iff a point on circle edge is to count as contained. [boolean]
+        :return: array, True iff each corresponding point is contained by circle. [numpy array of booleans]
+        """
+        if any(not isinstance(val, int) for val in (x_min, x_max, y_min, y_max)):
+            raise TypeError('All 4 grid edges must be integers but are not.')
+        if x_max < x_min or y_max < y_min:
+            raise ValueError('Grid point specifications must be in ascending order.')
+        dx2_values = [(x - self.origin.x) ** 2 for x in range(x_min, x_max + 1)]
+        dy2_values = [(y - self.origin.y) ** 2 for y in range(y_min, y_max + 1)]
+        dx2, dy2 = np.meshgrid(dx2_values, dy2_values)
+        if include_edges:
+            return (dx2 + dy2) <= self.radius ** 2
+        return (dx2 + dy2) < self.radius ** 2
+
 

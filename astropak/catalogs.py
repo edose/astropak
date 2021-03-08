@@ -9,7 +9,8 @@ from math import floor, cos, pi
 import pandas as pd
 
 # EVD packages:
-from .image import Image, FITS
+from .image import FITS
+from .legacy import Image
 
 # ATLAS refcat2 constants:
 ATLAS_REFCAT2_DIRECTORY = 'D:/Astro/Catalogs/ATLAS-refcat2/mag-0-16/'

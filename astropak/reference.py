@@ -14,11 +14,16 @@ DAYS_PER_YEAR_NOMINAL = 365.25
 SECONDS_PER_SIDEREAL_DAY = 86164.0905
 
 
+# MISCELLANEOUS constants and conventions:
+ISO_8601_FORMAT = '%Y-%m-%dT%H:%M:%S.%f'
+
+
 # SPECIAL CHARACTERS (unicode), including for astronomy:
 DEGREE_SIGN = '\u00B0'
 PLUS_MINUS = '\u00B1'
 MICRO_SIGN = '\u00B5'
-MOON_CHARACTER = '\u263D'  # open to left; open to right = u263E
+MOON_CHARACTER = '\u263D'  # open to left. Open to right = '\u263E'
+# MOON_CHARACTER = '\U0001F319'  # Drat, matplotlib complains 'glyph missing from current font'.
 COMET_CHARACTER = '\u2604'
 STAR_CHARACTER_WHITE = '\u2606'
 STAR_CHARACTER_BLACK = '\u2605'

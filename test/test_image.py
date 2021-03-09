@@ -10,10 +10,8 @@ import pytest
 import astropy.io.fits as apyfits
 
 # Other astropak modules:
+from astropak import image  # TARGET TEST MODULE.
 from astropak.util import RaDec, dec_as_degrees, ra_as_degrees
-
-# TARGET TEST MODULE:
-from astropak import image
 
 THIS_PACKAGE_ROOT_DIRECTORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEST_TOP_DIRECTORY = os.path.join(THIS_PACKAGE_ROOT_DIRECTORY, "test")
@@ -22,154 +20,228 @@ TEST_TOP_DIRECTORY = os.path.join(THIS_PACKAGE_ROOT_DIRECTORY, "test")
 _____Test_LEGACY_CLASSES______________________________________________ = 0
 
 
-def test_class_fits():
-    test_rel_directory = '$data_for_test'
+class Test_Class_FITS:
 
-    # Test failure on missing file:
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename='$no_file.txt')
-    assert fits.is_valid is False
+    def test_constructor(self):
+        test_rel_directory = '$data_for_test'
 
-    # Test exception handling for non-FITS file format:
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename='dummy.txt')
-    assert fits.is_valid is False
+        # Test failure on missing file:
+        fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename='$no_file.txt')
+        assert fits.is_valid is False
 
-    # Open FITS file with no calibration (at least not by MaxIm 5/6) and no plate solution:
-    given_filename = 'AD Dra-S001-R001-C001-I.fts'
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename=given_filename)
-    assert fits.is_valid
-    assert fits.is_calibrated is False
-    assert fits.is_plate_solved is False
-    assert fits.plate_solution_is_pinpoint is False
+        # Test exception handling for non-FITS file format:
+        fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename='dummy.txt')
+        assert fits.is_valid is False
 
-    # Test constructor from path in pieces, known extension:
-    given_filename = 'CE Aur-0001-V.fts'
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename=given_filename)
-    assert fits.is_valid
-    # Verify fields:
-    assert fits.fullpath == os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename)
-    assert fits.object == 'CE Aur'
-    assert fits.is_calibrated
-    assert fits.is_plate_solved
-    assert fits.plate_solution_is_pinpoint
-    assert fits.focal_length == pytest.approx(2702, abs=1)
-    assert fits.exposure == pytest.approx(587, abs=1)
-    assert fits.temperature == pytest.approx(-35, abs=0.1)
-    target_start_utc = datetime(2017, 4, 24, 4, 0, 31).replace(tzinfo=timezone.utc)
-    diff_seconds = (fits.utc_start - target_start_utc).total_seconds()
-    assert abs(diff_seconds) < 1
-    target_mid_utc = target_start_utc + timedelta(seconds=fits.exposure / 2.0)
-    diff_seconds = (fits.utc_mid - target_mid_utc).total_seconds()
-    assert abs(diff_seconds) < 1
-    assert fits.filter == 'V'
-    assert fits.airmass == pytest.approx(1.5263, abs=0.0001)
-    assert fits.guide_exposure == pytest.approx(1.4, abs=0.001)
-    assert fits.fwhm == pytest.approx(5.01, abs=0.01)
-    assert fits.plate_solution['CD1_1'] == pytest.approx(-1.92303985969E-006)
-    assert fits.plate_solution['CD2_1'] == pytest.approx(1.90588522664E-004)
-    assert fits.plate_solution['CRVAL1'] == pytest.approx(1.03834010522E+002)
-    assert fits.ra == pytest.approx(103.83791666666667)
-    assert fits.dec == pytest.approx(46.28638888888889)
-    # Verify field .image (== .image_xy):
-    assert fits.image.shape == (3072, 2047)  # *image* (x,y), which is *array* (n_rows, n_columns)
-    assert fits.image[0, 0] == 275  # upper-left corner
-    assert fits.image[0, 2046] == 180  # lower-left corner
-    assert fits.image[3071, 2046] == 265  # lower-right corner
-    assert fits.image[3071, 0] == 285  # upper-right corner
-    # Test methods:
-    assert fits.header_has_key('NAXIS')
-    assert not fits.header_has_key('NOT A KEY')
-    assert fits.header_value('NAXIS1') == 3072  # int
-    assert fits.header_value('EXPOSURE') == pytest.approx(587.0)  # float
-    assert fits.header_value('OBJECT').strip() == 'CE Aur'
-    radec = RaDec('06:56:12.8', '+46:32:08.9')
-    x, y = fits.xy_from_radec(radec)
-    assert x == pytest.approx(2826, 0.5)  # according to WCS terms only.
-    assert y == pytest.approx(218, 0.5)   # "
-    radec = fits.radec_from_xy(846, 932)
-    assert radec.ra == pytest.approx(ra_as_degrees('06:55:26.58'), 0.001)
-    assert radec.dec == pytest.approx(dec_as_degrees('46:09:25.6'), 0.001)
-    ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max = fits.bounding_ra_dec(extension_percent=2)
-    assert ra_deg_min == pytest.approx(103.5359646, abs=0.001)
-    assert ra_deg_max == pytest.approx(104.1320565, abs=0.001)
-    assert dec_deg_min == pytest.approx(45.9816651, abs=0.001)
-    assert dec_deg_max == pytest.approx(46.5946668, abs=0.001)
+        # Open FITS file with no calibration (at least not by MaxIm 5/6) and no plate solution:
+        given_filename = 'AD Dra-S001-R001-C001-I.fts'
+        fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename=given_filename)
+        assert fits.is_valid
+        assert fits.is_calibrated is False
+        assert fits.is_plate_solved is False
+        assert fits.plate_solution_is_pinpoint is False
 
-    # Test constructor when giving only 2 path items:
-    given_filename = 'CE Aur-0001-V.fts'
-    this_directory = os.path.join(TEST_TOP_DIRECTORY, test_rel_directory)
-    fits = image.FITS(this_directory, given_filename)
-    assert fits.is_valid
-    assert fits.fullpath == os.path.join(this_directory, given_filename)
-    assert fits.ra == pytest.approx(103.83791666666667)
-    assert fits.dec == pytest.approx(46.28638888888889)
+        # Test constructor from path in pieces, known extension:
+        given_filename = 'CE Aur-0001-V.fts'
+        fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename=given_filename)
+        assert fits.is_valid
+        # Verify fields:
+        assert fits.fullpath == os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename)
+        assert fits.object == 'CE Aur'
+        assert fits.is_calibrated
+        assert fits.is_plate_solved
+        assert fits.plate_solution_is_pinpoint
+        assert fits.focal_length == pytest.approx(2702, abs=1)
+        assert fits.exposure == pytest.approx(587, abs=1)
+        assert fits.temperature == pytest.approx(-35, abs=0.1)
+        target_start_utc = datetime(2017, 4, 24, 4, 0, 31).replace(tzinfo=timezone.utc)
+        diff_seconds = (fits.utc_start - target_start_utc).total_seconds()
+        assert abs(diff_seconds) < 1
+        target_mid_utc = target_start_utc + timedelta(seconds=fits.exposure / 2.0)
+        diff_seconds = (fits.utc_mid - target_mid_utc).total_seconds()
+        assert abs(diff_seconds) < 1
+        assert fits.filter == 'V'
+        assert fits.airmass == pytest.approx(1.5263, abs=0.0001)
+        assert fits.guide_exposure == pytest.approx(1.4, abs=0.001)
+        assert fits.fwhm == pytest.approx(5.01, abs=0.01)
+        assert fits.plate_solution['CD1_1'] == pytest.approx(-1.92303985969E-006)
+        assert fits.plate_solution['CD2_1'] == pytest.approx(1.90588522664E-004)
+        assert fits.plate_solution['CRVAL1'] == pytest.approx(1.03834010522E+002)
+        assert fits.ra == pytest.approx(103.83791666666667)
+        assert fits.dec == pytest.approx(46.28638888888889)
+        # Verify field .image (== .image_xy):
+        assert fits.image.shape == (3072, 2047)  # *image* (x,y), which is *array* (n_rows, n_columns)
+        assert fits.image[0, 0] == 275  # upper-left corner
+        assert fits.image[0, 2046] == 180  # lower-left corner
+        assert fits.image[3071, 2046] == 265  # lower-right corner
+        assert fits.image[3071, 0] == 285  # upper-right corner
+        # Test methods:
+        assert fits.header_has_key('NAXIS')
+        assert not fits.header_has_key('NOT A KEY')
+        assert fits.header_value('NAXIS1') == 3072  # int
+        assert fits.header_value('EXPOSURE') == pytest.approx(587.0)  # float
+        assert fits.header_value('OBJECT').strip() == 'CE Aur'
+        radec = RaDec('06:56:12.8', '+46:32:08.9')
+        x, y = fits.xy_from_radec(radec)
+        assert x == pytest.approx(2826, 0.5)  # according to WCS terms only.
+        assert y == pytest.approx(218, 0.5)   # "
+        radec = fits.radec_from_xy(846, 932)
+        assert radec.ra == pytest.approx(ra_as_degrees('06:55:26.58'), 0.001)
+        assert radec.dec == pytest.approx(dec_as_degrees('46:09:25.6'), 0.001)
+        ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max = fits.bounding_ra_dec(extension_percent=2)
+        assert ra_deg_min == pytest.approx(103.5359646, abs=0.001)
+        assert ra_deg_max == pytest.approx(104.1320565, abs=0.001)
+        assert dec_deg_min == pytest.approx(45.9816651, abs=0.001)
+        assert dec_deg_max == pytest.approx(46.5946668, abs=0.001)
 
-    # Test constructor when giving only fullpath:
-    given_filename = 'CE Aur-0001-V.fts'
-    fullpath = os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename)
-    fits = image.FITS(fullpath)
-    assert fits.is_valid
-    assert fits.fullpath == os.path.join(this_directory, given_filename)
-    assert fits.ra == pytest.approx(103.83791666666667)
-    assert fits.dec == pytest.approx(46.28638888888889)
+        # Test constructor when giving only 2 path items:
+        given_filename = 'CE Aur-0001-V.fts'
+        this_directory = os.path.join(TEST_TOP_DIRECTORY, test_rel_directory)
+        fits = image.FITS(this_directory, given_filename)
+        assert fits.is_valid
+        assert fits.fullpath == os.path.join(this_directory, given_filename)
+        assert fits.ra == pytest.approx(103.83791666666667)
+        assert fits.dec == pytest.approx(46.28638888888889)
 
-    # Open FITS file without known FITS extension (which FITS constructor itself must determine):
-    given_filename = 'CE Aur-0001-V'
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename=given_filename)
-    assert fits.is_valid
-    assert fits.fullpath == os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename +'.fts')
-    assert fits.object == 'CE Aur'
-    assert fits.airmass == pytest.approx(1.5263, abs=0.0001)
+        # Test constructor when giving only fullpath:
+        given_filename = 'CE Aur-0001-V.fts'
+        fullpath = os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename)
+        fits = image.FITS(fullpath)
+        assert fits.is_valid
+        assert fits.fullpath == os.path.join(this_directory, given_filename)
+        assert fits.ra == pytest.approx(103.83791666666667)
+        assert fits.dec == pytest.approx(46.28638888888889)
 
-    # Test parm pinpoint_pixel_scale_multiplier:
-    pinpoint_pixel_scale_multiplier = 0.68198 / 0.68618  # = pxscale(WCS) / pxscale(PinPoint).
-    given_filename = 'CE Aur-0001-V.fts'
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename=given_filename,
-                      pinpoint_pixel_scale_multiplier=pinpoint_pixel_scale_multiplier)
-    assert fits.is_valid
-    assert fits.plate_solution_is_pinpoint
-    assert fits.plate_solution['CD1_1'] == pytest.approx(-1.92303985969E-006 *
-                                                         pinpoint_pixel_scale_multiplier)
-    assert fits.plate_solution['CD1_1'] != pytest.approx(-1.92303985969E-006)
-    assert fits.plate_solution['CD2_1'] == pytest.approx(1.90588522664E-004 *
-                                                         pinpoint_pixel_scale_multiplier)
-    assert fits.plate_solution['CRVAL1'] == pytest.approx(1.03834010522E+002)  # unchanged
-    radec = RaDec('06:56:12.8', '+46:32:08.9')
-    x, y = fits.xy_from_radec(radec)
-    assert x == pytest.approx(2834, 0.5)  # according to WCS terms only.
-    assert y == pytest.approx(213, 0.5)   # "
-    radec = fits.radec_from_xy(846, 932)
-    assert radec.ra == pytest.approx(ra_as_degrees('06:55:26.58'), abs=0.001)
-    assert radec.dec == pytest.approx(dec_as_degrees('46:09:25.6'), abs=0.001)
+        # Open FITS file without known FITS extension (which FITS constructor itself must determine):
+        given_filename = 'CE Aur-0001-V'
+        fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename=given_filename)
+        assert fits.is_valid
+        assert fits.fullpath == os.path.join(TEST_TOP_DIRECTORY, test_rel_directory, given_filename +'.fts')
+        assert fits.object == 'CE Aur'
+        assert fits.airmass == pytest.approx(1.5263, abs=0.0001)
+
+    def test_parm_pinpoint_pixel_scale_multiplier(self):
+        test_rel_directory = '$data_for_test'
+        # Test parm pinpoint_pixel_scale_multiplier:
+        pinpoint_pixel_scale_multiplier = 0.68198 / 0.68618  # = pxscale(WCS) / pxscale(PinPoint).
+        given_filename = 'CE Aur-0001-V.fts'
+        fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory=test_rel_directory, filename=given_filename,
+                          pinpoint_pixel_scale_multiplier=pinpoint_pixel_scale_multiplier)
+        assert fits.is_valid
+        assert fits.plate_solution_is_pinpoint
+        assert fits.plate_solution['CD1_1'] == pytest.approx(-1.92303985969E-006 *
+                                                             pinpoint_pixel_scale_multiplier)
+        assert fits.plate_solution['CD1_1'] != pytest.approx(-1.92303985969E-006)
+        assert fits.plate_solution['CD2_1'] == pytest.approx(1.90588522664E-004 *
+                                                             pinpoint_pixel_scale_multiplier)
+        assert fits.plate_solution['CRVAL1'] == pytest.approx(1.03834010522E+002)  # unchanged
+        radec = RaDec('06:56:12.8', '+46:32:08.9')
+        x, y = fits.xy_from_radec(radec)
+        assert x == pytest.approx(2834, 0.5)  # according to WCS terms only.
+        assert y == pytest.approx(213, 0.5)   # "
+        radec = fits.radec_from_xy(846, 932)
+        assert radec.ra == pytest.approx(ra_as_degrees('06:55:26.58'), abs=0.001)
+        assert radec.dec == pytest.approx(dec_as_degrees('46:09:25.6'), abs=0.001)
 
 
-def test_fits__xy_from_radec():
-    from astropak.util import RaDec
-    fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test',
-                      filename='CE Aur-0001-V.fts')
-    # All tests lack distortion corrections (as none available in FITS header),
-    #    and so in real images calculated (x,y) values at edges will not quite line up with stars.
-    radec_near_center = RaDec('06:55:21.25', '+46:17:33.0')
-    x, y = fits.xy_from_radec(radec_near_center)
-    assert list((x, y)) == pytest.approx([1557.6, 1005.8], abs=0.25)
+    def test_fits__xy_from_radec(self):
+        fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test',
+                          filename='CE Aur-0001-V.fts')
+        # All tests lack distortion corrections (as none available in FITS header),
+        #    and so in real images calculated (x,y) values at edges will not quite line up with stars.
+        radec_near_center = RaDec('06:55:21.25', '+46:17:33.0')
+        x, y = fits.xy_from_radec(radec_near_center)
+        assert list((x, y)) == pytest.approx([1557.6, 1005.8], abs=0.25)
 
-    radec_upper_left = RaDec('06:56:10.6', '+46:02:27.1')
-    x, y = fits.xy_from_radec(radec_upper_left)
-    assert list((x, y)) == pytest.approx([229.8, 270.3], abs=0.25)
+        radec_upper_left = RaDec('06:56:10.6', '+46:02:27.1')
+        x, y = fits.xy_from_radec(radec_upper_left)
+        assert list((x, y)) == pytest.approx([229.8, 270.3], abs=0.25)
 
-    radec_upper_right = RaDec('06:56:14.3', '+46:29:11.6')
-    x, y = fits.xy_from_radec(radec_upper_right)
-    assert list((x, y)) == pytest.approx([2567.6, 197.2], abs=0.25)
+        radec_upper_right = RaDec('06:56:14.3', '+46:29:11.6')
+        x, y = fits.xy_from_radec(radec_upper_right)
+        assert list((x, y)) == pytest.approx([2567.6, 197.2], abs=0.25)
 
-    radec_lower_left = RaDec('06:54:26.0', '+46:02:44.9')
-    x, y = fits.xy_from_radec(radec_lower_left)
-    assert list((x, y)) == pytest.approx([271.8, 1857.0], abs=0.25)
+        radec_lower_left = RaDec('06:54:26.0', '+46:02:44.9')
+        x, y = fits.xy_from_radec(radec_lower_left)
+        assert list((x, y)) == pytest.approx([271.8, 1857.0], abs=0.25)
 
-    radec_lower_right = RaDec('06:54:18.0', '+46:30:02.0')
-    x, y = fits.xy_from_radec(radec_lower_right)
-    assert list((x, y)) == pytest.approx([2658.7, 1946.6], abs=0.25)
+        radec_lower_right = RaDec('06:54:18.0', '+46:30:02.0')
+        x, y = fits.xy_from_radec(radec_lower_right)
+        assert list((x, y)) == pytest.approx([2658.7, 1946.6], abs=0.25)
+
+    def test_fits_bounding_ra_dec(self):
+        # Normal case:
+        fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename='CE Aur-0001-V.fts')
+        assert fits.bounding_ra_dec(extension_percent=0) == pytest.approx([103.5474, 104.1206,
+                                                                           45.9935, 46.5829], abs=0.0001)
+        assert fits.bounding_ra_dec(extension_percent=3) == pytest.approx([103.5302, 104.1378,
+                                                                           45.9758, 46.6006], abs=0.0001)
+        # Case: Image straddles RA of zero:
+        fits.plate_solution['CRVAL1'] = 0.1
+        assert fits.bounding_ra_dec(extension_percent=0) == pytest.approx([359.8134, 0.3866,
+                                                                           45.9935, 46.5829], abs=0.0001)
 
 
 _____IMAGE_and_GEOMETRY_SUPPORT____________________________________ = 0
+
+
+def test_calc_ra_limits():
+    """ Verify that fn gives same result regardless of RA list order. """
+    ra_list = [23.3, 23.7, 23.4, 23.1]  # normal case.
+    for _ in ra_list:
+        ra_list.append(ra_list.pop(0))
+        assert list(image.calc_ra_limits(ra_list)) == pytest.approx([23.1, 23.7])
+    ra_list = [0.3, 359.7, 359.8, 0.2]  # RA straddling zero.
+    for _ in ra_list:
+        ra_list.append(ra_list.pop(0))
+        assert list(image.calc_ra_limits(ra_list)) == pytest.approx([359.7, 0.3])
+
+
+def test_aggregate_bounding_ra_dec():
+    # Normal case:
+    for extension_percent in (0, 3):
+        fits1 = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename='CE Aur-0001-V.fts')
+        fits2 = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename='CE Aur-0001-V.fts')
+        fits2.plate_solution['CRVAL1'] += 0.11  # RA
+        fits2.plate_solution['CRVAL2'] -= 0.13  # Dec
+        fits3 = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename='CE Aur-0001-V.fts')
+        fits3.plate_solution['CRVAL1'] -= 0.14
+        fits3.plate_solution['CRVAL2'] += 0.09
+        fits_objects = [fits1, fits2, fits3]
+        aggr_ra_deg_min, aggr_ra_deg_max, aggr_dec_deg_min, aggr_dec_deg_max = \
+            image.aggregate_bounding_ra_dec(fits_objects, extension_percent=extension_percent)
+        expected_aggr_ra_deg_min = fits3.bounding_ra_dec(extension_percent)[0]
+        expected_aggr_ra_deg_max = fits2.bounding_ra_dec(extension_percent)[1]
+        expected_aggr_dec_deg_min = fits2.bounding_ra_dec(extension_percent)[2]
+        expected_aggr_dec_deg_max = fits3.bounding_ra_dec(extension_percent)[3]
+        assert aggr_ra_deg_min == pytest.approx(expected_aggr_ra_deg_min, abs=0.0001)
+        assert aggr_ra_deg_max == pytest.approx(expected_aggr_ra_deg_max, abs=0.0001)
+        assert aggr_dec_deg_min == pytest.approx(expected_aggr_dec_deg_min, abs=0.0001)
+        assert aggr_dec_deg_max == pytest.approx(expected_aggr_dec_deg_max, abs=0.0001)
+
+    # Case: fits images straddle RA zero:
+    for extension_percent in (0, 3):
+        fits1 = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename='CE Aur-0001-V.fts')
+        fits1.plate_solution['CRVAL1'] = 0.1  # RA
+        fits2 = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename='CE Aur-0001-V.fts')
+        fits2.plate_solution['CRVAL1'] = 0.13  # RA
+        fits2.plate_solution['CRVAL2'] += 0.04  # Dec
+        fits3 = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test', filename='CE Aur-0001-V.fts')
+        fits3.plate_solution['CRVAL1'] = 359.96  # RA
+        fits3.plate_solution['CRVAL2'] -= 0.053  # Dec
+        fits_objects = [fits1, fits2, fits3]
+        aggr_ra_deg_min, aggr_ra_deg_max, aggr_dec_deg_min, aggr_dec_deg_max = \
+            image.aggregate_bounding_ra_dec(fits_objects, extension_percent=extension_percent)
+        expected_aggr_ra_deg_min = fits3.bounding_ra_dec(extension_percent)[0]
+        expected_aggr_ra_deg_max = fits2.bounding_ra_dec(extension_percent)[1]
+        expected_aggr_dec_deg_min = fits3.bounding_ra_dec(extension_percent)[2]
+        expected_aggr_dec_deg_max = fits2.bounding_ra_dec(extension_percent)[3]
+        assert aggr_ra_deg_min == pytest.approx(expected_aggr_ra_deg_min, abs=0.0001)
+        assert aggr_ra_deg_max == pytest.approx(expected_aggr_ra_deg_max, abs=0.0001)
+        assert aggr_dec_deg_min == pytest.approx(expected_aggr_dec_deg_min, abs=0.0001)
+        assert aggr_dec_deg_max == pytest.approx(expected_aggr_dec_deg_max, abs=0.0001)
+
+
 
 
 def test_distance_to_line():  # OK 2021-01-28.

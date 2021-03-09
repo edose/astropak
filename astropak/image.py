@@ -30,8 +30,6 @@ ISO_8601_FORMAT = '%Y-%m-%dT%H:%M:%S'
 
 _____LEGACY_CLASS_from_package_PHOTRIX_______________________________ = 0
 
-# TODO: Ensure class FITS uses only astropy for FITS handling, so that it can be included in astropak.
-
 
 class FITS:
     """ Holds data from a FITS file. Immutable. Used mostly by an Image object (class Image).
@@ -197,10 +195,11 @@ class FITS:
         for x in [-extension_fraction * xsize, (1 + extension_fraction) * xsize]:
             for y in [-extension_fraction * ysize, (1 + extension_fraction) * ysize]:
                 radec = self.radec_from_xy(x, y)
-                ra_list.append(radec.ra)
+                ra_list.append(radec.ra % 360)  # ensure within [0, 360).
                 dec_list.append(radec.dec)
-        ra_deg_min = min(ra_list) % 360.0
-        ra_deg_max = max(ra_list) % 360.0
+
+        # Special RA algorithm to handle corners straddling RA=0:
+        ra_deg_min, ra_deg_max = calc_ra_limits(ra_list)
         dec_deg_min = min(dec_list)
         dec_deg_max = max(dec_list)
         return ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max
@@ -612,6 +611,39 @@ class MovingSourceAp(Ap):
 _____IMAGE_and_GEOMETRY_SUPPORT____________________________________ = 0
 
 
+def calc_ra_limits(ra_list):
+    """ For list of RA values (usually RAs of image corners), return min and max RA within [0, 360). """
+    # TODO: this algorithm is O(2) (ouch). Try sorting RAs first, then looking left one element in the list.
+    min_ra, max_diff = 0.0, 360.0
+    for this_ra in ra_list:
+        other_ras = [ra for ra in ra_list.copy() if ra != this_ra]
+        this_max_diff = max([(ra - this_ra) % 360 for ra in other_ras])
+        if this_max_diff < max_diff:
+            min_ra, max_diff = this_ra, this_max_diff
+    ra_deg_min = min_ra
+    ra_deg_max = (ra_deg_min + max_diff) % 360
+    return ra_deg_min, ra_deg_max
+
+
+def aggregate_bounding_ra_dec(fits_objects, extension_percent=3):
+    """ For list of plate-solved FITS-class objects, return aggregate bounding RA and Dec values.
+        Typically needed for catalog lookup, to cover the area of a group of nearly colocated images.
+    :param fits_objects: FITS-class object for images of interest. [iterable of FITS-class objects]
+    :param extension_percent: how much to extend bounding box, as percent of each FITS image size
+           (not as percent of overall aggregate bounding box size). [float]
+    :return: tuple of results: ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max. [tuple of 4 floats]
+    """
+    ra_list, dec_list = [], []
+    for fo in fits_objects:
+        ra_deg_min, ra_deg_max, dec_deg_min, dec_deg_max = \
+            fo.bounding_ra_dec(extension_percent=extension_percent)
+        ra_list.extend([ra_deg_min, ra_deg_max])
+        dec_list.extend([dec_deg_min, dec_deg_max])
+    aggr_ra_deg_min, aggr_ra_deg_max = calc_ra_limits(ra_list)
+    aggr_dec_deg_min, aggr_dec_deg_max = min(dec_list), max(dec_list)
+    return aggr_ra_deg_min, aggr_ra_deg_max, aggr_dec_deg_min, aggr_dec_deg_max
+
+
 def calc_cutout_offsets(xy_center, cutout_radius):
     """ Calculate and return the index x- and y-offsets from a parent image to a cutout of given radius.
         This is made a separate function so that all cutout-dependent classes must use *identical* offsets.
@@ -749,15 +781,3 @@ def all_fits_filenames(top_directory, rel_directory, validate_fits=False):
     # TODO: write all_fits_files().
     pass
 
-
-def bounding_box_all_fits_files(top_directory, rel_directory, percent_extension=3):
-    """ Return a RA,Dec bounding box that covers *all* FITS files in a given directory.
-        (Calls all_fits_files(), then iterates through files with FITS.bounding_ra_dec().)
-    :param top_directory:
-    :param rel_directory:
-    :param percent_extension: user-desired percentage of each dimension that FITS bounding box is extended,
-               to ensure that non-linear plate-solution problems etc. are covered. [float]
-    :return:
-    """
-    # TODO: write bounding_box_all_fits_files().
-    pass

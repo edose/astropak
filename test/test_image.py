@@ -319,8 +319,8 @@ def test_class_ap():
     im, hdr = get_test_image()
 
     # Test constructor, both masks None (default, rare):
-    c = image.Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
-                 foreground_mask=None, background_mask=None)
+    c = image.Old_Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
+                     foreground_mask=None, background_mask=None)
     assert c.is_valid == True
     assert c.is_pristine == True
     assert np.array_equal(im, c.parent)
@@ -354,8 +354,8 @@ def test_class_ap():
     x_offset = 1476 - 26
     y_offset = 1243 - 26
     fg_mask = image.make_circular_mask(53, (1470 - x_offset, 1240 - y_offset), radius=10)
-    c = image.Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
-                 foreground_mask=fg_mask, background_mask=None)
+    c = image.Old_Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
+                     foreground_mask=fg_mask, background_mask=None)
     assert c.is_valid == True
     assert c.is_pristine == True
     assert c.is_all_within_parent == True
@@ -371,8 +371,8 @@ def test_class_ap():
     y_offset = 1243 - 26
     fg_mask = image.make_circular_mask(53, (1470 - x_offset, 1240 - y_offset), radius=10)
     bg_mask = np.logical_not(image.make_circular_mask(53, (1480 - x_offset, 1242 - y_offset), radius=12))
-    c = image.Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
-                 foreground_mask=fg_mask, background_mask=bg_mask)
+    c = image.Old_Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
+                     foreground_mask=fg_mask, background_mask=bg_mask)
     assert c.is_valid == True
     assert c.is_pristine == True
     assert c.is_all_within_parent == True
@@ -386,7 +386,7 @@ def test_class_ap():
 
 
 def test_class_ap_net_flux():
-    """ Test Ap.net_flux(). """
+    """ Test Old_Ap.net_flux(). """
     # TODO: adjust this for new .calc_background_value():
     ap = make_standard_ap_object()
     background_adjusted_flux, flux_stddev, background_level, background_stddev = ap.net_flux(gain=1.57)
@@ -397,7 +397,7 @@ def test_class_ap_net_flux():
 
 
 def test_class_ap_centroid():
-    """ Test Ap class centroid facility. """
+    """ Test Old_Ap class centroid facility. """
     # TODO: adjust this for new .calc_background_value():
     ap = make_offcenter_ap_object()
     x_centroid, y_centroid = ap.xy_centroid
@@ -473,7 +473,7 @@ def make_test_ap_object(xy_center):
     """ So that we don't have to keep making this over and over; so that we have a standard object
         against which to test.
     :param xy_center: target (x,y) center of new ap object, in parent pixels. [2-tuple of floats]
-    :return: standard test object with concentric circular masks. [Ap class object]
+    :return: standard test object with concentric circular masks. [Old_Ap class object]
     """
     im, hdr = get_test_image()
     cutout_radius = 22
@@ -489,15 +489,15 @@ def make_test_ap_object(xy_center):
     outer_bg_mask = image.make_circular_mask(cutout_size, xy_cutout_center,
                                              radius=radius_outside)
     bg_mask = np.logical_or(inner_bg_mask, outer_bg_mask)
-    ap_object = image.Ap(im, xy_center=xy_center, cutout_radius=cutout_radius,
-                         foreground_mask=fg_mask, background_mask=bg_mask)
+    ap_object = image.Old_Ap(im, xy_center=xy_center, cutout_radius=cutout_radius,
+                             foreground_mask=fg_mask, background_mask=bg_mask)
     return ap_object
 
 
 def make_standard_ap_object():
     """ So that we don't have to keep making this over and over; so that we have a standard object
         against which to test.
-    :return: standard test object with concentric circular masks. [Ap class object]
+    :return: standard test object with concentric circular masks. [Old_Ap class object]
     """
     xy_center = 1476, 1243  # near flux centroid.
     return make_test_ap_object(xy_center)
@@ -506,7 +506,7 @@ def make_standard_ap_object():
 def make_offcenter_ap_object():
     """ So that we don't have to keep making this over and over; so that we have a standard object
         against which to test.
-    :return: standard test object with concentric circular masks. [Ap class object]
+    :return: standard test object with concentric circular masks. [Old_Ap class object]
     """
     xy_center = 1473, 1247  # a few pixels from flux centroid.
     return make_test_ap_object(xy_center)
@@ -515,7 +515,7 @@ def make_offcenter_ap_object():
 def test_make_gaussian_ap_object():
     """ So that we don't have to keep making this over and over; so that we have a standard object
         against which to test.
-    :return: standard 2-D gaussian test object with concentric circular masks. [Ap class object]
+    :return: standard 2-D gaussian test object with concentric circular masks. [Old_Ap class object]
     """
     from astropy.table import Table
     table = Table()

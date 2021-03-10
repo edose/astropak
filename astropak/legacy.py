@@ -342,3 +342,339 @@ class Aperture:
         sigma = sqrt(mean_dist2 / 2.0)
         # this math is verified 20170723, but yields larger FWHM than does MaxIm.
         return FWHM_PER_SIGMA * sigma
+
+
+
+_____Old_AP_CLASS_and_related_classes________________________________________ = 0
+
+
+class Old_Ap:
+    """ General-purpose square slice of an image, mostly meant for aperture photometry.
+        This is also the parent class and engine for more specifically defined aperture classes, especially
+            ApStationary (esp. for stars) and ApMoving (esp. for Minor Planets / asteroids).
+        This is a much more versatile successor to mp_phot.util's class Square.
+        All Old_Ap objects are IMMUTABLE once constructed; recentering generates and returns new object.
+
+        Masks are required for this class to define which pixels are used, or the caller must specifically
+            specify one or both masks are not to be used.
+        Masks are foreground (light source) and background (surrounding sky). Any pixels falling outside
+            the parent image range are always set to True (masked out, invalidated).
+        If both masks are given as None: foreground mask is all cutout pixels, background mask is null.
+        If foreground mask is given but background mask is None: foreground mask is used, and
+            background mask is made the logical inverse of the foreground mask.
+        If both masks are given, they are both used as given.
+        Masks are boolean arrays, must match data in shape, and follow numpy's mask convention:
+            mask pixel=True means corresponding data pixel is invalid ("masked away") and not used.
+            mask pixel=False means data pixel is valid and used.
+    """
+    def __init__(self, parent, xy_center, cutout_radius, foreground_mask=None, background_mask=None):
+        """ General constructor, from explicitly passed-in parent data array and 2 mask arrays.
+        :param parent: the parent image array [numpy ndarray; to pass in CCDData or numpy masked array,
+                   please see separate, specific constructors, below].
+        :param xy_center: center pixel position in parent. This should be the best prior estimate
+                   of the light source's centroid at mid-exposure, as (x,y) (not as numpy [y, x] array).
+                   [2-tuple, 2-list, or 2-array of floats]
+        :param cutout_radius: half-length of cutout's edge length less one, in pixels.
+                   Actual size of cutout will be from cutout_radius rounded up,
+                   that is, from 2 * ceil(cutout_radius) + 1.
+                   So Old_Ap object size and shape are always an odd number of pixels, no exceptions. [float]
+        :param foreground_mask: mask array for pixels to be counted in flux, centroid, etc.
+                   Shape must exactly match shape of either the parent array or the cutout array.
+                   Array True -> MASKED pixel, False -> pixel is valid and used. (numpy convention).
+                   Specifying None means 'use all pixels'. [numpy ndarray of booleans, or None]
+        :param background_mask: mask array for pixels to be counted in background flux, centroid, etc.
+                   Shape must exactly match shape of either the parent array or the cutout array.
+                   Array True -> MASKED pixel, False -> pixel is valid and used. (numpy convention).
+                   Specifying None means background is assumed to be zero and has no effect.
+                   [numpy ndarray of booleans, or None]
+        """
+        self.parent = parent.copy()
+        self.xy_center = tuple(xy_center)
+        self.cutout_radius = int(ceil(cutout_radius))
+        self.input_foreground_mask = foreground_mask
+        self.input_background_mask = background_mask
+        self.messages = []
+
+        # Construct small sub-array from parent pixels:
+        self.x_offset, self.y_offset = calc_cutout_offsets(self.xy_center, cutout_radius)
+        self.x_raw_low = self.x_offset
+        self.x_center = self.x_offset + self.cutout_radius
+        self.x_raw_high = self.x_offset + 2 * self.cutout_radius
+        self.y_raw_low = self.y_offset
+        self.y_center = self.y_offset + self.cutout_radius
+        self.y_raw_high = self.y_offset + 2 * self.cutout_radius
+        edge_pixel_count = self.cutout_radius * 2 + 1
+        self.shape = (edge_pixel_count, edge_pixel_count)
+        self.size = edge_pixel_count ** 2
+        x_data_low = max(0, self.x_raw_low)
+        x_data_high = min(parent.shape[1] - 1, self.x_raw_high)
+        y_data_low = max(0, self.y_raw_low)
+        y_data_high = min(parent.shape[0] - 1, self.y_raw_high)
+        if (x_data_low > x_data_high) or (y_data_low > y_data_high):
+            self.messages.append('Data boundaries are outside parent array. '
+                                 'Old_Ap object cannot be constructed.')
+            self.is_valid = False
+            return
+
+        # Make Old_Ap's data array: ensure any pixels outside parent have value np.nan:
+        self.data = np.full(self.shape, fill_value=np.nan, dtype=np.double)  # template only.
+        parent_data_available = self.parent[y_data_low: y_data_high + 1,
+                                x_data_low: x_data_high + 1].copy()
+        self.data[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+        x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = parent_data_available
+
+        # Ensure masks are in shape of Old_Ap's data array (extract if parent-sized masks passed in),
+        #    also ensure that any pixels outside parent have value True (to invalidate):
+        within_parent_mask = np.full(self.shape, fill_value=True, dtype=np.bool)
+        within_parent_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+        x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = False
+        self.is_all_within_parent = np.all(within_parent_mask == False)
+
+        if self.input_foreground_mask is None:
+            self.foreground_mask = within_parent_mask
+        else:
+            self.foreground_mask = np.full(self.shape, fill_value=True, dtype=np.bool)  # template only.
+            if self.input_foreground_mask.shape == self.parent.shape:
+                parent_foreground_mask_available = \
+                    self.input_foreground_mask[y_data_low: y_data_high + 1,
+                    x_data_low: x_data_high + 1].copy()
+                self.foreground_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = \
+                    parent_foreground_mask_available
+            elif self.input_foreground_mask.shape == self.shape:
+                self.foreground_mask = np.logical_or(self.input_foreground_mask, within_parent_mask)
+            else:
+                self.messages.append('Foreground mask shape does not match data shape. '
+                                     'Old_Ap object cannot be constructed.')
+                self.is_valid = False
+                return
+
+        if self.input_background_mask is None:
+            foreground_raw_inverse = np.logical_not(self.foreground_mask)
+            self.background_mask = np.logical_or(foreground_raw_inverse, within_parent_mask)
+        else:
+            self.background_mask = np.full(self.shape, fill_value=True, dtype=np.bool)  # template only.
+            if self.input_background_mask.shape == self.parent.shape:
+                parent_background_mask_available = \
+                    self.input_background_mask[y_data_low: y_data_high + 1,
+                    x_data_low: x_data_high + 1].copy()
+                self.background_mask[y_data_low - self.y_offset: (y_data_high + 1) - self.y_offset,
+                x_data_low - self.x_offset: (x_data_high + 1) - self.x_offset] = \
+                    parent_background_mask_available
+            elif self.input_background_mask.shape == self.shape:
+                self.background_mask = np.logical_or(self.input_background_mask, within_parent_mask)
+            else:
+                self.messages.append('Background mask shape does not match data shape. '
+                                     'Old_Ap object cannot be constructed.')
+                self.is_valid = False
+                return
+
+        self.pixel_count = self.size  # synonym.
+        self.foreground_pixel_count = np.sum(self.foreground_mask == False)  # valid pixels
+        self.background_pixel_count = np.sum(self.background_mask == False)  # "
+        self.mask_overlap_pixel_count = np.sum(np.logical_and((self.foreground_mask == False),
+                                                              (self.background_mask == False)))
+        self.xy_centroid = self._calc_centroid()
+        self.is_valid = True
+        self.is_pristine = (len(self.messages) == 0) and self.is_valid
+
+    def __str__(self):
+        return 'Old_Ap object of x,y shape (' + str(self.shape[1]) + ', ' + str(self.shape[0]) + ')' + \
+               ' from parent image of x,y shape (' + str(self.parent.shape[1]) + ', ' + \
+               str(self.parent.shape[0]) + '), masks passed in directly.'
+
+    def _calc_centroid(self):
+        """ Calculate (x,y) centroid of background adjusted flux, in pixels of parent image.
+         :return: centroid position of background-adjusted flux, in parent-image pixels (x,y).
+                  [2-tuple of floats]
+        Yes, the conventions and polarities are non-intuitive, given numpy arrays' [y,x] indexing
+            as well as numpy.meshgrid()'s utterly AMBIGUOUS documentation of the identities of x and y,
+            as well as PyCharm SciView's incorrectly TRANSPOSED display of numpy arrays. Arrrgggghhh.
+        """
+        # Calculate x,y position of centroid:
+        x_grid, y_grid = np.meshgrid(np.arange(self.shape[0]), np.arange(self.shape[1]))
+        background_level, _ = calc_background_value(self.data, self.background_mask)
+        data_minus_background = self.data - background_level
+        x_net_product = x_grid * data_minus_background
+        y_net_product = y_grid * data_minus_background
+        x_product_sum = np.sum(x_net_product, where=np.logical_not(self.foreground_mask))
+        y_product_sum = np.sum(y_net_product, where=np.logical_not(self.foreground_mask))
+        data_sum = np.sum(data_minus_background, where=np.logical_not(self.foreground_mask))
+        x_centroid = self.x_offset + (x_product_sum / data_sum)
+        y_centroid = self.y_offset + (y_product_sum / data_sum)
+        # Calculate sigma & FWHM of flux:
+        # TODO: Add facility for shape sigma/FWHM (+++ can start with the very same net_product arrays).
+        # Will require a specially made 2-D Gaussian parent image (with known sigma), prob from
+        #     external library, e.g., photutils.datasets.make_gaussian_sources_image() etc.
+        dx = x_grid - x_centroid
+        dy = y_grid - y_centroid
+        dx2 = dx * dx
+        dy2 = dy * dy
+        dx2_product = dx2 * data_minus_background
+        dy2_product = dy2 * data_minus_background
+        # TODO: This 'sigma' may need to be multiplied by 1/2.
+        sigma = (dx2_product + dy2_product) / data_sum
+        return x_centroid, y_centroid
+
+    def net_flux(self, gain=1):
+        """ Return net ADU flux and other statistics, usually the end goal of using this class.
+            Subclasses should inherit this unchanged.
+        :param gain: CCD-like gain in e-/ADU. Property of camera. Needed only for
+                     accurate uncertainty estimation. [float]
+        :return: background-adjusted foreground (source) 'net' flux,
+                 std dev uncertainty of net flux,
+                 background level (sigma-clipped median), and
+                 std dev uncertainty in background level (per pixel, not of background area's average).
+                 [4-tuple of floats]
+        """
+        raw_flux = np.sum(self.data, where=np.logical_not(self.foreground_mask))
+        flux_variance_from_poisson = raw_flux / gain  # from var(e-) = flux in e-.
+        if self.background_pixel_count >= 2:
+            background_level, background_stddev = calc_background_value(self.data, self.background_mask)
+        else:
+            background_level, background_stddev = 0.0, 0.0  # no effect on flux or stddev.
+        background_adjusted_flux = raw_flux - self.foreground_pixel_count * background_level
+
+        flux_variance_from_background = self.foreground_pixel_count * \
+                                        ((background_stddev ** 2) / self.background_pixel_count)
+        flux_variance = flux_variance_from_poisson + flux_variance_from_background
+        flux_stddev = sqrt(flux_variance)
+        return background_adjusted_flux, flux_stddev, background_level, background_stddev
+
+    def make_new_object(self, new_xy_center):
+        """ Make new object using new xy_center.
+            For this (parent) class with masks explicitly supplied by user, and masks do not change,
+                so this function is probably not very useful for the parent class Old_Ap.
+            Note: this requires a cutout_radius, but subclasses should compute their own.
+            For the most subclasses (e.g., PointSourceAp), masks will be recreated by the constructor,
+                using new xy_center.
+         """
+        return Old_Ap(self.parent, new_xy_center, self.cutout_radius,
+                      self.foreground_mask, self.background_mask)
+
+    def recenter(self, max_adjustment=None, max_iterations=3):
+        """
+            Subclasses should inherit this unchanged.
+                (Though .make_new_object() must be written specially for each subclass).
+        :param max_adjustment:
+        :param max_iterations:
+        :return: newly recentered object. [PointSourceAp object]
+        """
+        previous_ap = self
+        next_ap = self  # keep IDE happy.
+        for i in range(max_iterations):
+            previous_centroid = previous_ap.xy_centroid
+            new_xy_center = previous_centroid
+            next_ap = self.make_new_object(new_xy_center)
+            new_centroid = next_ap.xy_centroid
+            adjustment = sqrt((new_centroid[0] - previous_centroid[0])**2 +
+                              (new_centroid[1] - previous_centroid[1])**2)
+            if adjustment < max_adjustment:
+                return next_ap
+            previous_ap = next_ap
+        return next_ap
+
+
+class Old_PointSourceAp(Old_Ap):
+    """ Standard photometric aperture for stationary point source of light, esp. for a star.
+        Always makes a circular foreground mask and an annular background mask, both centered on the
+            given image coordinates of the point source.
+        (If we will need a background mask that bleeds to the cutout's edges rather than being restricted
+            to an annulus--for example, to work close to the parent image's edges, then that will
+            definitely require a new sibling class to this one so that recentering retains the mask shapes.)
+    """
+    # noinspection PyTypeChecker
+    def __init__(self, parent, xy_center, foreground_radius, gap, background_width):
+        """ Main and probably sole constructor.
+        :param parent:
+        :param xy_center:
+        :param foreground_radius: radial size of foreground around point source, in pixels. [float]
+        :param gap: width of gap, difference between radius of foreground and inside radius of
+                        background annulus, in pixels. [float]
+        :param background_width: width of annulus, difference between inside and outside radii
+                   of background annulus, in pixels.
+        """
+        # Parms specific to PointSourceAp:
+        self.foreground_radius = foreground_radius
+        self.gap = gap
+        self.background_width = background_width
+        cutout_radius = int(ceil(self.foreground_radius + self.gap + self.background_width)) + 1
+        cutout_size = 2 * cutout_radius + 1
+        self.x_offset, self.y_offset = calc_cutout_offsets(xy_center, cutout_radius)
+        xy_cutout_center = xy_center[0] - self.x_offset, xy_center[1] - self.y_offset
+
+        foreground_mask = make_circular_mask(mask_size=cutout_size, xy=xy_cutout_center,
+                                             radius=self.foreground_radius)
+        radius_inside = self.foreground_radius + self.gap
+        radius_outside = radius_inside + self.background_width
+        background_mask_center_disc = np.logical_not(make_circular_mask(cutout_size, xy_cutout_center,
+                                                                        radius_inside))
+        background_mask_outer_disc = make_circular_mask(cutout_size, xy_cutout_center, radius_outside)
+        background_mask = np.logical_or(background_mask_center_disc, background_mask_outer_disc)
+        super().__init__(parent, xy_center, cutout_radius, foreground_mask, background_mask)
+
+    def make_new_object(self, new_xy_center):
+        """ Overrides parent-class method.
+            Make new object using new xy_center.
+            Masks will be recreated by the constructor, using new xy_center.
+         """
+        return Old_PointSourceAp(self.parent, new_xy_center,
+                                 self.foreground_radius, self.gap, self.background_width)
+
+
+class Old_MovingSourceAp(Old_Ap):
+    """ Elongated 'pill-shaped' photometric aperture for moving point source of light,
+            esp. for a minor planet/asteroid.
+        (If we will need a background mask that bleeds to the cutout's edges rather than being restricted
+            to a (pill-shaped) annulus--for example, to work close to the parent image's edges, that will
+            definitely require a new sibling class to this one so that recentering retains the mask shapes.)
+        """
+    # noinspection PyTypeChecker
+    def __init__(self, parent, xy_start, xy_end, foreground_radius, gap, background_width):
+        """ Main and probably sole constructor.
+        :param parent:
+        :param xy_start:
+        :param xy_end:
+        :param foreground_radius:
+        :param gap:
+        :param background_width:
+        """
+        # Parms specific to MovingSourceAp:
+        self.xy_start = xy_start
+        self.xy_end = xy_end
+        self.foreground_radius = foreground_radius
+        self.gap = gap
+        self.background_width = background_width
+        self.xy_motion = xy_end[0] - xy_start[0], xy_end[1] - xy_start[1]
+
+        xy_center = (xy_start[0] + xy_end[0]) / 2.0, (xy_start[1] + xy_end[1]) / 2.0
+        foreground_mask_x_span = abs(xy_start[0] - xy_end[0]) + 2 * foreground_radius
+        foreground_mask_y_span = abs(xy_start[1] - xy_end[1]) + 2 * foreground_radius
+        max_foreground_mask_span = max(foreground_mask_x_span, foreground_mask_y_span)
+        cutout_radius = int(ceil(max_foreground_mask_span / 2 + gap + background_width)) + 1
+        cutout_size = 2 * cutout_radius + 1
+        cutout_x_offset, cutout_y_offset = calc_cutout_offsets(xy_center, cutout_radius)
+        xy_start_cutout = (xy_start[0] - cutout_x_offset, xy_start[1] - cutout_y_offset)
+        xy_end_cutout = (xy_end[0] - cutout_x_offset, xy_end[1] - cutout_y_offset)
+
+        foreground_mask = make_pill_mask(cutout_size, xy_start_cutout, xy_end_cutout, foreground_radius)
+        radius_inside = self.foreground_radius + gap
+        radius_outside = radius_inside + self.background_width
+        background_mask_center_pill = np.logical_not(make_pill_mask(cutout_size, xy_start_cutout,
+                                                                    xy_end_cutout, radius_inside))
+        background_mask_outer_pill = make_pill_mask(cutout_size, xy_start_cutout,
+                                                    xy_end_cutout, radius_outside)
+        background_mask = np.logical_or(background_mask_center_pill, background_mask_outer_pill)
+        super().__init__(parent, xy_center, cutout_radius, foreground_mask, background_mask)
+
+    def make_new_object(self, new_xy_center):
+        """ Overrides parent-class method.
+            Make new object using new xy_center.
+            Masks will be recreated by the constructor, using new xy_center.
+        """
+        x_half_motion, y_half_motion = self.xy_motion[0] / 2.0, self.xy_motion[1] / 2.0
+        new_xy_start = new_xy_center[0] - x_half_motion, new_xy_center[1] - y_half_motion
+        new_xy_end = new_xy_center[0] + x_half_motion, new_xy_center[1] + y_half_motion
+        return Old_MovingSourceAp(self.parent, new_xy_start, new_xy_end,
+                                  self.foreground_radius, self.gap, self.background_width)
+

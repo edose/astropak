@@ -80,12 +80,12 @@ class DXY(namedtuple('DXY', ['dx', 'dy'])):
 
     def __mul__(self, other):
         if isinstance(other, numbers.Real):
-            return XY(other * self.dx, other * self.dy)
+            return DXY(other * self.dx, other * self.dy)
         raise TypeError('DXY.__mul__() requires float scalar as operand.')
 
     def __rmul__(self, other):
         if isinstance(other, numbers.Real):
-            return XY(other * self.dx, other * self.dy)
+            return DXY(other * self.dx, other * self.dy)
         raise TypeError('DXY.__rmul__() requires float scalar as operand.')
 
     def __sub__(self, other):
@@ -96,7 +96,7 @@ class DXY(namedtuple('DXY', ['dx', 'dy'])):
     def __truediv__(self, other):
         if isinstance(other, numbers.Real):
             if other != 0:
-                return XY(self.dx / other, self.dy / other)
+                return DXY(self.dx / other, self.dy / other)
             raise ZeroDivisionError
         raise TypeError('DXY.__div__() requires float scalar as operand.')
 
@@ -128,7 +128,7 @@ class DXY(namedtuple('DXY', ['dx', 'dy'])):
     @property
     def direction(self):
         """ Return angle of vector's angle relative to positive x axis
-            (e.g., +y yields pi/2), in radians. Returns zero if vector is zero-length.
+            (e.g., +y yields +pi/2), in radians. Returns zero if vector is zero-length.
         """
         if self.length2 > 0.0:
             return atan2(self.dy, self.dx)

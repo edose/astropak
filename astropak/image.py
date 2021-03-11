@@ -596,18 +596,20 @@ def calc_cutout_offsets(xy_center, cutout_radius):
     return x_offset, y_offset
 
 
-def make_circular_mask(mask_size, xy, radius):
+def make_circular_mask(mask_size, xy_origin, radius):
     """ Construct a traditional mask array for small, stationary object, esp. for a star.
         Unmask only those pixels *within* radius pixels of a given point. Invert the mask separately to
             mask the interior. Convention: pixel True -> VALID (opposite of numpy).
     :param mask_size: edge size of new mask array. [int]
-    :param xy: (x, y) pixel coordinates of central point, relative to mask origin. [2-tuple of floats]
+    :param xy_origin: (x, y) pixel coordinates of circle origin, rel. to mask origin. [2-tuple of floats]
     :param radius: radius of ends and half-width of center region. [float]
-    :return: mask array, True -> VALID (opposite convention from numpy). [np.ndarray of booleans]
+    :return: mask array, True -> MASKED out/invalid (numpy convention). [np.ndarray of booleans]
     """
-    circle = Circle_in_2D(xy_origin=xy, radius=radius)
-    new_mask = circle.contains_points_unitgrid(0, mask_size -1, 0, mask_size - 1, include_edges=True)
-    return new_mask
+    xy_origin = xy_origin if isinstance(xy_origin, XY) else XY(xy_origin[0], xy_origin[1])
+    circle = Circle_in_2D(xy_origin=xy_origin, radius=radius)
+    is_inside = circle.contains_points_unitgrid(0, mask_size - 1, 0, mask_size - 1, include_edges=True)
+    mask = np.logical_not(is_inside)  # numpy convention.
+    return mask
 
 
 def make_pill_mask(mask_size, xya, xyb, radius):
@@ -617,7 +619,7 @@ def make_pill_mask(mask_size, xya, xyb, radius):
     :param xya: (xa, ya) pixel coordinates of start-motion point. [XY object, or 2-tuple of floats]
     :param xyb: (xb, yb) pixel coordinates of end-motion point. [XY object, or 2-tuple of floats]
     :param radius: radius of ends and half-width of center region. [float]
-    :return: mask array, True -> VALID (opposite convention from numpy). [np.ndarray of booleans]
+    :return: mask array, True -> MASKED out/invalid (numpy convention). [np.ndarray of booleans]
     """
     xya = xya if isinstance(xya, XY) else XY(xya[0], xya[1])
     xyb = xyb if isinstance(xyb, XY) else XY(xyb[0], xyb[1])
@@ -637,10 +639,11 @@ def make_pill_mask(mask_size, xya, xyb, radius):
     rectangle = Rectangle_in_2D(xy_corner1, xy_corner2, xy_corner3)
 
     # Make mask, including edges so no gaps can appear at rectangle corners:
-    circle_mask_a = circle_a.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
-    circle_mask_b = circle_b.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
-    rectangle_mask = rectangle.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
-    mask = np.logical_and(np.logical_and(circle_mask_a, circle_mask_b), rectangle_mask)
+    circle_a_contains = circle_a.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
+    circle_b_contains = circle_b.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
+    rectangle_contains = rectangle.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
+    any_contains = np.logical_or(np.logical_or(circle_a_contains, circle_b_contains), rectangle_contains)
+    mask = np.logical_not(any_contains)  # numpy convention.
     return mask
 
 

@@ -242,8 +242,6 @@ def test_aggregate_bounding_ra_dec():
         assert aggr_dec_deg_max == pytest.approx(expected_aggr_dec_deg_max, abs=0.0001)
 
 
-
-
 def test_distance_to_line():  # OK 2021-01-28.
     assert image.distance_to_line((3, 4), (-1, 7), (-1, -33)) == 4.0  # horizontal line.
     assert image.distance_to_line((35, 4), (-100, 7), (100, 7)) == 3.0  # verical line.
@@ -252,7 +250,7 @@ def test_distance_to_line():  # OK 2021-01-28.
     assert image.distance_to_line((3, 4), (-1, 7), (-1, -33), dist_ab=40.0) == 4.0
 
 
-def test_make_circular_mask():  # OK 2021-02-03.
+def test_make_circular_mask():
     cm = image.make_circular_mask(25, (12.2, 15.5), 8)
     assert isinstance(cm, np.ndarray)
     assert cm.dtype == np.bool
@@ -261,21 +259,21 @@ def test_make_circular_mask():  # OK 2021-02-03.
     assert not np.any(cm[12:18, 8:14])
 
 
-def test_make_pill_mask():  # OK 2021-01-28.
-    pm = image.make_pill_mask(41, (15, 20), (10, 18), 4)
+def test_make_pill_mask():
+    pm = image.make_pill_mask((41, 41), (7, 20), (11, 15), 4)
     assert isinstance(pm, np.ndarray)
     assert pm.shape == (41, 41)
-    assert np.sum(pm == False) == 92  # number of valid pixels.
+    assert np.sum(pm == False) == 100  # number of valid pixels.
 
-    pm = image.make_pill_mask(43, (10, 20), (10, 18), 7)  # vertical motion.
-    assert pm.shape == (43, 43)
+    pm = image.make_pill_mask((43, 44), (10, 20), (10, 18), 7)  # vertical motion.
+    assert pm.shape == (44, 43)
     assert np.sum(pm == False) == 179  # number of valid pixels.
 
-    pm = image.make_pill_mask(60, (13, 20), (28, 20), 9)  # horizontal motion, increasing x.
-    assert pm.shape == (60, 60)
+    pm = image.make_pill_mask((61, 60), (13, 20), (28, 20), 9)  # horizontal motion, increasing x.
+    assert pm.shape == (60, 61)
     assert np.sum(pm == False) == 538  # number of valid pixels.
 
-    pm_reverse = image.make_pill_mask(60, (28, 20), (13, 20), 9)  # horizontal motion, decreasing x.
+    pm_reverse = image.make_pill_mask((61, 60), (28, 20), (13, 20), 9)  # horizontal motion, decreasing x.
     assert np.array_equal(pm_reverse, pm)  # doesn't matter which point is the start, which is end.
 
 
@@ -319,7 +317,7 @@ def test_class_ap():
     im, hdr = get_test_image()
 
     # Test constructor, both masks None (default, rare):
-    c = image.Old_Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
+    c = image.Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
                      foreground_mask=None, background_mask=None)
     assert c.is_valid == True
     assert c.is_pristine == True
@@ -354,7 +352,7 @@ def test_class_ap():
     x_offset = 1476 - 26
     y_offset = 1243 - 26
     fg_mask = image.make_circular_mask(53, (1470 - x_offset, 1240 - y_offset), radius=10)
-    c = image.Old_Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
+    c = image.Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
                      foreground_mask=fg_mask, background_mask=None)
     assert c.is_valid == True
     assert c.is_pristine == True
@@ -371,7 +369,7 @@ def test_class_ap():
     y_offset = 1243 - 26
     fg_mask = image.make_circular_mask(53, (1470 - x_offset, 1240 - y_offset), radius=10)
     bg_mask = np.logical_not(image.make_circular_mask(53, (1480 - x_offset, 1242 - y_offset), radius=12))
-    c = image.Old_Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
+    c = image.Ap(im, xy_center=(1476.3, 1243.7), cutout_radius=25.2,
                      foreground_mask=fg_mask, background_mask=bg_mask)
     assert c.is_valid == True
     assert c.is_pristine == True
@@ -386,7 +384,7 @@ def test_class_ap():
 
 
 def test_class_ap_net_flux():
-    """ Test Old_Ap.net_flux(). """
+    """ Test Ap.net_flux(). """
     # TODO: adjust this for new .calc_background_value():
     ap = make_standard_ap_object()
     background_adjusted_flux, flux_stddev, background_level, background_stddev = ap.net_flux(gain=1.57)
@@ -397,7 +395,7 @@ def test_class_ap_net_flux():
 
 
 def test_class_ap_centroid():
-    """ Test Old_Ap class centroid facility. """
+    """ Test Ap class centroid facility. """
     # TODO: adjust this for new .calc_background_value():
     ap = make_offcenter_ap_object()
     x_centroid, y_centroid = ap.xy_centroid
@@ -426,7 +424,7 @@ def test_class_ap_make_new_object():
     assert x_centroid == pytest.approx(1476.278, abs=0.01)
     assert y_centroid == pytest.approx(1243.254, abs=0.01)
 
-    # Make new AP object from old one, masks retained.
+    # Make new Ap object from old one, masks retained.
     new_xy_center = 1473, 1247
     new_ap = ap.make_new_object(new_xy_center)
     assert new_ap.is_valid
@@ -489,7 +487,7 @@ def make_test_ap_object(xy_center):
     outer_bg_mask = image.make_circular_mask(cutout_size, xy_cutout_center,
                                              radius=radius_outside)
     bg_mask = np.logical_or(inner_bg_mask, outer_bg_mask)
-    ap_object = image.Old_Ap(im, xy_center=xy_center, cutout_radius=cutout_radius,
+    ap_object = image.Ap(im, xy_center=xy_center, cutout_radius=cutout_radius,
                              foreground_mask=fg_mask, background_mask=bg_mask)
     return ap_object
 

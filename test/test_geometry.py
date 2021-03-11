@@ -27,6 +27,7 @@ class Test_Class_XY:
     def test_xy_add(self, setup_xy):
         xy1a, xy1b, xy2, dxy = setup_xy
         assert xy1a + dxy == xy2
+        assert isinstance(xy1a + dxy, geom.XY)
         with pytest.raises(TypeError):
             _ = xy1a + xy2
             _ = xy1a + (5, 6)
@@ -36,6 +37,8 @@ class Test_Class_XY:
         xy1a, xy1b, xy2, dxy = setup_xy
         assert xy2 - xy1a == dxy
         assert xy2 - dxy == xy1a
+        assert isinstance(xy2 - xy1a, geom.DXY)
+        assert isinstance(xy2 - dxy, geom.XY)
         with pytest.raises(TypeError):
             _ = xy2 - (5, 6)
             _ = xy2 - 5
@@ -44,6 +47,8 @@ class Test_Class_XY:
         xy1a, xy1b, xy2, dxy = setup_xy
         assert xy1a.vector_to(xy2) == dxy
         assert xy1a.vector_to(xy1b) == geom.DXY(0, 0)
+        assert isinstance(xy1a.vector_to(xy2), geom.DXY)
+        assert isinstance(xy1a.vector_to(xy1b), geom.DXY)
         with pytest.raises(TypeError):
             _ = xy1a.vector_to(dxy)
             _ = xy1a.vector_to((5, 6))
@@ -79,6 +84,7 @@ class Test_Class_DXY:
     def test_dxy_add(self, setup_dxy):
         xy1, xy2, dxy1, dxy2a, dxy2b = setup_dxy
         assert dxy1 + dxy2a == geom.DXY(58, 70)
+        assert isinstance(dxy1 + dxy2a, geom.DXY)
         assert dxy1 + xy1 == xy2
         with pytest.raises(TypeError):
             _ = dxy2a + (5, 6)
@@ -87,6 +93,7 @@ class Test_Class_DXY:
     def test_dxy_subtract(self, setup_dxy):
         xy1, xy2, dxy1, dxy2a, dxy2b = setup_dxy
         assert dxy2a - dxy1 == geom.DXY(52, 62)
+        assert isinstance(dxy2a - dxy1, geom.DXY)
         with pytest.raises(TypeError):
             _ = dxy1 - xy1
             _ = dxy2a - (5, 6)
@@ -95,6 +102,8 @@ class Test_Class_DXY:
     def test_dxy_multiply_fns(self, setup_dxy):
         xy1, xy2, dxy1, dxy2a, dxy2b = setup_dxy
         assert dxy1 * 3.5 == 3.5 * dxy1 == geom.DXY(10.5, 14)
+        assert isinstance(dxy1 * 3.5, geom.DXY)
+        assert isinstance(3.5 * dxy1, geom.DXY)
         with pytest.raises(TypeError):
             _ = dxy1 * xy1
             _ = dxy1 * (5, 6)
@@ -102,6 +111,7 @@ class Test_Class_DXY:
     def test_dxy_division(self, setup_dxy):
         xy1, xy2, dxy1, dxy2a, dxy2b = setup_dxy
         assert dxy1 / 2 == geom.DXY(1.5, 2)
+        assert isinstance(dxy1 / 2, geom.DXY)
         with pytest.raises(ZeroDivisionError):
             _ = dxy1 / 0.0
         with pytest.raises(TypeError):

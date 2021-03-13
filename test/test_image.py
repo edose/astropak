@@ -12,12 +12,10 @@ import astropy.io.fits as apyfits
 # Other astropak modules:
 from astropak import image  # TARGET TEST MODULE.
 from astropak.util import RaDec, dec_as_degrees, ra_as_degrees
+from astropak.geometry import XY, DXY
 
 THIS_PACKAGE_ROOT_DIRECTORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEST_TOP_DIRECTORY = os.path.join(THIS_PACKAGE_ROOT_DIRECTORY, "test")
-
-
-_____Test_LEGACY_CLASSES______________________________________________ = 0
 
 
 class Test_Class_FITS:
@@ -143,7 +141,6 @@ class Test_Class_FITS:
         assert radec.ra == pytest.approx(ra_as_degrees('06:55:26.58'), abs=0.001)
         assert radec.dec == pytest.approx(dec_as_degrees('46:09:25.6'), abs=0.001)
 
-
     def test_fits__xy_from_radec(self):
         fits = image.FITS(TEST_TOP_DIRECTORY, rel_directory='$data_for_test',
                           filename='CE Aur-0001-V.fts')
@@ -180,6 +177,286 @@ class Test_Class_FITS:
         fits.plate_solution['CRVAL1'] = 0.1
         assert fits.bounding_ra_dec(extension_percent=0) == pytest.approx([359.8134, 0.3866,
                                                                            45.9935, 46.5829], abs=0.0001)
+
+
+class Test_Class_Ap:
+    """ This will test items of class Ap that cannot be tested via most subclasses."""
+    @staticmethod
+    @pytest.fixture(scope='function')
+    def get_image():
+        """ Return test header and image, only. """
+        fullpath = os.path.join(TEST_TOP_DIRECTORY, '$data_for_test', 'CE Aur-0001-V.fts')
+        hdu0 = apyfits.open(fullpath)[0]
+        hdr = hdu0.header
+        im = hdu0.data
+        return hdr, im
+
+    def test_constructor_mask_overlap(self, get_image):
+        hdr, im = get_image
+        foreground_mask = np.full(shape=(41, 41), fill_value=True)
+        background_mask = foreground_mask.copy()
+        foreground_mask[25:28, 11:17] = False
+        background_mask[26:30, 9:14] = False
+        ap = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                      foreground_mask=foreground_mask, background_mask=background_mask)
+        # Quality criteria:
+        assert ap.is_valid is True
+        assert ap.all_inside_image is True
+        assert ap.all_outside_image is False
+        assert ap.any_foreground_outside_image is False
+        assert ap.mask_overlap_pixel_count == 6
+
+    def test_constructor_background_mask_none(self, get_image):
+        hdr, im = get_image
+        foreground_mask = np.full(shape=(41, 41), fill_value=True)
+        foreground_mask[25:28, 11:17] = False
+        ap = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                      foreground_mask=foreground_mask, background_mask=None)
+        # Quality criteria:
+        assert ap.is_valid is True
+        assert ap.all_inside_image is True
+        assert ap.all_outside_image is False
+        assert ap.any_foreground_outside_image is False
+        assert ap.mask_overlap_pixel_count == 0
+        # Verify background mask:
+        foreground_mask_inverse = np.logical_not(foreground_mask.copy())
+        assert np.array_equal(ap.background_mask, foreground_mask_inverse)
+
+    def test_constructor_background_mask_zero(self, get_image):
+        hdr, im = get_image
+        foreground_mask = np.full(shape=(41, 41), fill_value=True)
+        foreground_mask[25:28, 11:17] = False
+        ap = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                      foreground_mask=foreground_mask, background_mask=0)
+        # Quality criteria:
+        assert ap.is_valid is True
+        assert ap.all_inside_image is True
+        assert ap.all_outside_image is False
+        assert ap.any_foreground_outside_image is False
+        assert ap.mask_overlap_pixel_count == 0
+        # Verify background mask:
+        expected_background_mask = np.full(shape=(41, 41), fill_value=True)
+        assert np.array_equal(ap.background_mask, expected_background_mask)
+
+    def test_constructor_exceptions(self, get_image):
+        hdr, im = get_image
+        foreground_mask = np.full(shape=(41, 41), fill_value=True)
+        background_mask = np.full(shape=(40, 41), fill_value=True)
+        with pytest.raises(image.MaskError) as e:
+            ap = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                          foreground_mask=foreground_mask, background_mask=background_mask)
+        assert 'masks differ in shape' in str(e)
+        with pytest.raises(image.MaskError) as e:
+            ap = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                          foreground_mask=foreground_mask, background_mask=True)
+        assert 'mask type' in str(e) and 'bool' in str(e) and 'not valid' in str(e)
+
+    def test_make_new_object(self, get_image):
+        hdr, im = get_image
+        foreground_mask = np.full(shape=(41, 41), fill_value=True)
+        background_mask = foreground_mask.copy()
+        foreground_mask[25:28, 11:17] = False
+        background_mask[26:30, 9:14] = False
+        ap = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                      foreground_mask=foreground_mask, background_mask=background_mask)
+        with pytest.raises(NotImplementedError):
+            _ = ap.make_new_object(new_xy_center=(445, 667))
+
+
+class Test_Class_PointSourceAp:
+    """ This will test class PointSourceAp, but will also test the parent class Ap pretty thoroughly."""
+    @staticmethod
+    @pytest.fixture(scope='function')
+    def get_image():
+        """ Return test header and image, only. """
+        fullpath = os.path.join(TEST_TOP_DIRECTORY, '$data_for_test', 'CE Aur-0001-V.fts')
+        hdu0 = apyfits.open(fullpath)[0]
+        hdr = hdu0.header
+        im = hdu0.data
+        return hdr, im
+
+    def test_constructor_masks_inside_image(self, get_image):
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(1476.3, 1243.7),
+                                 foreground_radius=9, gap=6, background_width=5)
+        # Quality criteria:
+        assert ap.is_valid is True
+        assert ap.all_inside_image is True
+        assert ap.all_outside_image is False
+        assert ap.any_foreground_outside_image is False
+        assert ap.mask_overlap_pixel_count == 0
+        # Values as input:
+        assert (ap.foreground_radius, ap.gap, ap.background_width) == (9, 6, 5)
+        assert ap.annulus_inner_radius == ap.foreground_radius + ap.gap
+        assert ap.annulus_outer_radius == ap.foreground_radius + ap.gap + ap.background_width
+        assert np.array_equal(ap.image, im)
+        assert ap.xy_center == XY(1476.3, 1243.7)
+        assert ap.input_foreground_mask.shape == (44, 44)
+        assert ap.input_background_mask.shape == ap.input_foreground_mask.shape
+        # Shapes and pixel counts:
+        assert ap.cutout.shape == ap.foreground_mask.shape == ap.background_mask.shape == (44, 44)
+        assert ap.foreground_pixel_count == np.sum(ap.input_foreground_mask == False) == 255
+        assert ap.background_pixel_count == np.sum(ap.input_background_mask == False) == 549
+        # ADUs and fluxes:
+        assert ap.background_level == pytest.approx(257, abs=1)
+        assert ap.background_std == pytest.approx(13.11, abs=0.1)
+        assert ap.foreground_max == 1065
+        assert ap.foreground_min == 234
+        assert ap.raw_flux == pytest.approx(96550, abs=10)
+        assert ap.net_flux == pytest.approx(31015, abs=10)
+        assert ap.flux_stddev(gain=1.57) == pytest.approx(248.2, abs=0.1)
+        # Source flux position & shape:
+        assert ap.xy_centroid[0] == pytest.approx(1476.31, abs=0.01)
+        assert ap.xy_centroid[1] == pytest.approx(1243.31, abs=0.01)
+        assert ap.sigma == pytest.approx(2.81, abs=0.1)
+        assert ap.fwhm == pytest.approx(6.63, abs=0.1)
+        assert ap.elongation == pytest.approx(1.077, abs=0.02)
+
+    def test_constructor_background_cropped_low(self, get_image):
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(17, 15),
+                                 foreground_radius=9, gap=6, background_width=5)  # no source there.
+        # Quality criteria:
+        assert ap.is_valid is True
+        assert ap.all_inside_image is False
+        assert ap.all_outside_image is False
+        assert ap.any_foreground_outside_image is False
+        assert ap.mask_overlap_pixel_count == 0
+        # Shapes and pixel counts:
+        assert ap.cutout.shape == ap.foreground_mask.shape == ap.background_mask.shape == (37, 39)
+        assert ap.foreground_pixel_count == np.sum(ap.foreground_mask == False) == 253
+        assert ap.background_pixel_count == np.sum(ap.background_mask == False) == 440
+        # ADUs and fluxes:
+        assert ap.background_level == pytest.approx(246, abs=1)
+        assert ap.background_std == pytest.approx(23, abs=1)
+        assert ap.foreground_max == 312
+        assert ap.foreground_min == 186
+        assert ap.raw_flux == pytest.approx(62611, abs=10)
+
+    def test_constructor_background_cropped_high(self, get_image):
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(3060, 2035),
+                                 foreground_radius=9, gap=6, background_width=5)  # no source there.
+        # Quality criteria:
+        assert ap.is_valid is True
+        assert ap.all_inside_image is False
+        assert ap.all_outside_image is False
+        assert ap.any_foreground_outside_image is False
+        assert ap.mask_overlap_pixel_count == 0
+        # Shapes and pixel counts:
+        assert ap.cutout.shape == ap.foreground_mask.shape == ap.background_mask.shape == (34, 34)
+        assert ap.foreground_pixel_count == np.sum(ap.foreground_mask == False) == 253
+        assert ap.background_pixel_count == np.sum(ap.background_mask == False) == 261
+        # ADUs and fluxes:
+        assert ap.background_level == pytest.approx(245, abs=1)
+        assert ap.background_std == pytest.approx(18, abs=1)
+        assert ap.foreground_max == 300
+        assert ap.foreground_min == 193
+        assert ap.raw_flux == pytest.approx(61791, abs=10)
+
+    def test_constructor_foreground_cropped(self, get_image):
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(2568, 2050),
+                                 foreground_radius=9, gap=6, background_width=5)  # no source there.
+        # Quality criteria:
+        assert ap.is_valid is False
+        assert ap.all_inside_image is False
+        assert ap.all_outside_image is False
+        assert ap.any_foreground_outside_image is True
+        assert ap.mask_overlap_pixel_count == 0
+
+    def test_constructor_ap_all_outside(self, get_image):
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(2568, 2100),
+                                 foreground_radius=9, gap=6, background_width=5)
+        # Quality criteria:
+        assert ap.is_valid is False
+        assert ap.all_inside_image is False
+        assert ap.all_outside_image is True
+        assert ap.any_foreground_outside_image is True
+        assert ap.mask_overlap_pixel_count is None
+
+    def test_make_new_object(self, get_image):
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(1476, 1244),
+                                 foreground_radius=9, gap=6, background_width=5)
+        ap2 = ap.make_new_object(new_xy_center=(2086, 1570))
+        assert ap2.xy_center == (2086, 1570)
+        assert np.array_equal(ap.foreground_mask, ap2.foreground_mask)
+        assert np.array_equal(ap.background_mask, ap2.background_mask)
+        assert ap2.xy_centroid[0] == pytest.approx(2085.70, abs=0.02)
+        assert ap2.xy_centroid[1] == pytest.approx(1569.12, abs=0.02)
+        assert ap2.foreground_max == 3414
+
+    def test_recenter(self, get_image):
+        """ This will test class Ap.recenter() for all subclasses. """
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(1476.3, 1243.7),
+                                 foreground_radius=9, gap=6, background_width=5)
+        ap2 = ap.recenter()
+        assert ap2.is_valid
+        assert ap2.xy_center == ap.xy_centroid
+        assert ap2.xy_centroid == pytest.approx((1476.302, 1243.275), abs=0.002)
+
+
+
+class Test_Class_MovingSourceAp:
+    """ This will test class MovingSourceAp.
+        Assumes class Ap was tested thoroughly by Test_Class_PointSourceAp."""
+    @staticmethod
+    @pytest.fixture(scope='function')
+    def get_image():
+        """ Return test header and image, only. """
+        fullpath = os.path.join(TEST_TOP_DIRECTORY, '$data_for_test', 'CE Aur-0001-V.fts')
+        hdu0 = apyfits.open(fullpath)[0]
+        hdr = hdu0.header
+        im = hdu0.data
+        return hdr, im
+
+    def test_constructor_masks_inside_image(self, get_image):
+        hdr, im = get_image
+        ap = image.MovingSourceAp(im, xy_start=(2354, 1505), xy_end=(2361, 1510),
+                                  foreground_radius=9, gap=6, background_width=5)
+        # Quality criteria:
+        assert ap.is_valid is True
+        assert ap.all_inside_image is True
+        assert ap.all_outside_image is False
+        assert ap.any_foreground_outside_image is False
+        assert ap.mask_overlap_pixel_count == 0
+        # Values as input:
+        assert (ap.foreground_radius, ap.gap, ap.background_width) == (9, 6, 5)
+        assert np.array_equal(ap.image, im)
+        assert ap.xy_start == XY(2354, 1505)
+        assert ap.xy_end == XY(2361, 1510)
+        # Shapes and pixel counts:
+        assert ap.cutout.shape == ap.foreground_mask.shape == ap.background_mask.shape == (49, 51)
+        assert ap.foreground_pixel_count == np.sum(ap.input_foreground_mask == False) == 408
+        assert ap.background_pixel_count == np.sum(ap.input_background_mask == False) == 634
+        # ADUs and fluxes:
+        assert ap.background_level == pytest.approx(254, abs=1)
+        assert ap.background_std == pytest.approx(14.7, abs=0.2)
+        assert ap.foreground_max == 1817
+        assert ap.foreground_min == 226
+        assert ap.raw_flux == pytest.approx(210697, abs=100)
+        assert ap.net_flux == pytest.approx(107000, abs=100)
+        assert ap.flux_stddev(gain=1.57) == pytest.approx(366, abs=1)
+        # Source flux position & shape:
+        assert ap.xy_centroid[0] == pytest.approx(2357.65, abs=0.05)
+        assert ap.xy_centroid[1] == pytest.approx(1507.08, abs=0.05)
+        assert ap.sigma == pytest.approx(3.15, abs=0.05)
+        assert ap.fwhm == pytest.approx(7.41, abs=0.05)
+
+    def test_make_new_object(self, get_image):
+        hdr, im = get_image
+        ap = image.MovingSourceAp(im, xy_start=(2354, 1505), xy_end=(2360, 1511),
+                                  foreground_radius=9, gap=6, background_width=5)
+        ap2 = ap.make_new_object(new_xy_center=(2086, 1570))
+        assert ap2.xy_center == (2086, 1570)
+        assert np.array_equal(ap.foreground_mask, ap2.foreground_mask)
+        assert np.array_equal(ap.background_mask, ap2.background_mask)
+        assert ap2.xy_centroid[0] == pytest.approx(2085.66, abs=0.02)
+        assert ap2.xy_centroid[1] == pytest.approx(1569.07, abs=0.02)
+        assert ap2.foreground_max == 3414
 
 
 _____IMAGE_and_GEOMETRY_SUPPORT____________________________________ = 0
@@ -495,7 +772,7 @@ def make_test_ap_object(xy_center):
 def make_standard_ap_object():
     """ So that we don't have to keep making this over and over; so that we have a standard object
         against which to test.
-    :return: standard test object with concentric circular masks. [Old_Ap class object]
+    :return: standard test object with concentric circular masks. [Ap class object]
     """
     xy_center = 1476, 1243  # near flux centroid.
     return make_test_ap_object(xy_center)
@@ -504,7 +781,7 @@ def make_standard_ap_object():
 def make_offcenter_ap_object():
     """ So that we don't have to keep making this over and over; so that we have a standard object
         against which to test.
-    :return: standard test object with concentric circular masks. [Old_Ap class object]
+    :return: standard test object with concentric circular masks. [Ap class object]
     """
     xy_center = 1473, 1247  # a few pixels from flux centroid.
     return make_test_ap_object(xy_center)
@@ -513,7 +790,7 @@ def make_offcenter_ap_object():
 def test_make_gaussian_ap_object():
     """ So that we don't have to keep making this over and over; so that we have a standard object
         against which to test.
-    :return: standard 2-D gaussian test object with concentric circular masks. [Old_Ap class object]
+    :return: standard 2-D gaussian test object with concentric circular masks. [Ap class object]
     """
     from astropy.table import Table
     table = Table()

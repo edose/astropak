@@ -9,6 +9,7 @@ __author__ = "Eric Dose :: Albuquerque"
 import os
 from datetime import timezone, timedelta
 from math import ceil, cos, sin, pi, sqrt, log
+import numbers
 
 # External packages:
 import numpy as np
@@ -28,6 +29,11 @@ TOP_DIRECTORY = 'C:/Astro/Images/Borea Photrix'
 # FITS_REGEX_PATTERN = '^(.+)\.(f[A-Za-z]{2,3})$'
 FITS_EXTENSIONS = ['fts', 'fit', 'fits']  # allowed filename extensions
 ISO_8601_FORMAT = '%Y-%m-%dT%H:%M:%S'
+
+
+class MaskError(Exception):
+    """ Raised on any mask error, usually when masks differ in shape. """
+    pass
 
 
 _____LEGACY_CLASS_from_package_PHOTRIX_______________________________ = 0
@@ -290,103 +296,121 @@ class Ap:
         Masks are foreground (light source) and background (surrounding sky).
         Any specified pixels that would fall outside parent image are excluded (cutout is cropped).
     """
-    def __init__(self, image, xy_center, xy_origin, foreground_mask, background_mask=None):
+    def __init__(self, image, xy_center, xy_offset, foreground_mask, background_mask=None):
         """ General constructor, from explicitly passed-in parent data array and 2 mask arrays.
         :param image: the parent image array [numpy ndarray; to pass in CCDData or numpy masked array,
                    please see separate, specific constructors, below].
         :param xy_center: center pixel position in parent. This should be the best prior estimate
                    of the light source's centroid at mid-exposure, as (x,y) (not as numpy [y, x] array).
                    [XY object, 2-tuple, 2-list, or 2-array of floats]
-        :param xy_origin: lowest index of cutout (upper-left corner of image).
+        :param xy_offset: lowest index of cutout (upper-left corner of image), that is, the offset of
+                   cutout's incides from parent image's indices.
                    [XY object, 2-tuple, 2-list, or 2-array of floats]
         :param foreground_mask: mask array for pixels to be counted in flux, centroid, etc.
-                   Required boolean array, numpy convention (True -> pixel masked out, unused).
+                   Required boolean array. Numpy mask convention (True -> pixel masked out, unused).
                    Mask shape defines shape of cutout to be used. [numpy ndarray of booleans]
         :param background_mask: mask array for pixels to be counted in background flux, centroid, etc.
-                   If not None, shape must exactly match shape of foreground_mask.
-                   Optional boolean array, numpy convention (True -> pixel masked out, unused).
-                   Specifying None means background unusused (zero). [numpy ndarray of booleans, or None]
+                   If None, will be set to inverse of foreground_mask.
+                   If zero [int or float], will be set to zero (that is, background is not used).
+                   Otherwise (normal case), must be boolean array in same shape as foreground_mask.
+                   Numpy mask convention (True -> pixel masked out, unused).
         """
+        # Save inputs:
         self.image = image
         self.xy_center = xy_center if isinstance(xy_center, XY) else XY(xy_center[0], xy_center[1])
-        self.xy_input_origin = xy_origin if isinstance(xy_origin, XY) else XY(xy_origin[0], xy_origin[1])
+        xy_input_offset = xy_offset if isinstance(xy_offset, XY) else XY(xy_offset[0], xy_offset[1])
         self.input_foreground_mask = foreground_mask
         self.input_background_mask = background_mask
-        self.input_shape = self.input_background_mask.shape
-        self.dxy_input_shape = DXY(self.input_shape[1], self.input_shape[0])
-        self.messages = []
 
-        # Crop cutout to fit inside image:
-        self.xy_origin = XY(max(0, self.xy_input_origin.x), max(0, self.xy_input_origin.y))
-        self.xy_max = XY(min(image.shape[1] - 1, self.xy_input_origin.x + self.input_shape[1]),
-                         min(image.shape[0] - 1, self.xy_input_origin.y + self.input_shape[0]))
-        self.dxy_shape = self.xy_max - self.xy_origin + DXY(1, 1)
-        self.cutout = self.image[self.xy_origin.x:self.xy_max.x + 1, self.xy_origin.y:self.xy_max.y + 1]
-        must_crop = self.dxy_shape != self.dxy_input_shape
-        if must_crop:
-            dxy_to_crop_low = self.xy_origin - self.xy_input_origin
-            foreground_mask_cropped_low = self.input_foreground_mask[dxy_to_crop_low.y:, dxy_to_crop_low.x:]
-            self.foreground_mask = foreground_mask_cropped_low[:self.dxy_shape.y, :self.dxy_shape.x]
-        else:
-            self.foreground_mask = self.input_foreground_mask
-        if must_crop and self.input_background_mask is not None:
-            dxy_to_crop_low = self.xy_origin - self.xy_input_origin
-            background_mask_cropped_low = self.input_background_mask[dxy_to_crop_low.y:, dxy_to_crop_low.x:]
-            self.background_mask = background_mask_cropped_low[:self.dxy_shape.y, :self.dxy_shape.x]
-        else:
+        # Default values:
+        self.is_valid = None
+        self.all_inside_image = None
+        self.all_outside_image = None
+        self.any_foreground_outside_image = None
+        self.mask_overlap_pixel_count = None
+
+        # Ensure background mask is boolean array of same shape as foreground mask, whatever was input:
+        if self.input_background_mask is None:
+            self.background_mask = np.logical_not(self.input_foreground_mask)
+        elif type(self.input_background_mask) in (int, float) and self.input_background_mask == 0:
+            self.background_mask = np.full_like(self.input_foreground_mask, fill_value=True, dtype=np.bool)
+        elif isinstance(self.input_background_mask, np.ndarray):
+            if self.input_background_mask.shape != self.input_foreground_mask.shape:
+                raise MaskError('Foreground and background masks differ in shape.')
             self.background_mask = self.input_background_mask
-
-        # Invalidate aperture if entirely outside image:
-        if self.dxy_shape.x == 0 or self.dxy_shape.y == 0:
-            self.messages.append('Aperture lies outside image. Ap object invalid.')
-            self.is_valid = False
-            return
-
-        # Invalidate aperture if any foreground pixels will lie outside image:
-        if must_crop:
-            active_pixels_as_input = np.sum(self.input_foreground_mask == False)
-            active_pixels_cropped = np.sum(self.foreground_mask == False)
-            if active_pixels_cropped != active_pixels_as_input:
-                self.messages.append('Foreground pixels lie outside image. Ap object invalid.')
-            self.is_valid = False
-            return
-
-        # Set background to None (zero value) if all active background pixels will lie outside image:
-        if self.background_mask is not None:
-            active_background_pixels = np.sum(self.background_mask == False)
-            if active_background_pixels <= 0:
-                self.background_mask = None
-
-        # Compute pixel counts:
-        self.foreground_pixel_count = np.sum(self.foreground_mask == False)  # active pixels
-        if self.background_mask is None:
-            self.background_level, self.background_std = 0.0, 0.0
-            self.foreground_pixel_count = 0
-            self.mask_overlap_pixel_count = 0
         else:
+            raise MaskError('Background mask type ' + str(type(self.input_background_mask)) +
+                            ' is not valid.')
+
+        # Determine whether any foreground mask pixels fall outside of parent image:
+        x_low_raw = xy_input_offset.x
+        y_low_raw = xy_input_offset.y
+        x_high_raw = xy_input_offset.x + self.input_foreground_mask.shape[1] - 1
+        y_high_raw = xy_input_offset.y + self.input_foreground_mask.shape[0] - 1
+        x_low_final = max(x_low_raw, 0)
+        y_low_final = max(y_low_raw, 0)
+        x_high_final = min(x_high_raw, image.shape[1] - 1)
+        y_high_final = min(y_high_raw, image.shape[0] - 1)
+        self.all_inside_image = ((x_low_final, y_low_final, x_high_final, y_high_final) ==
+                                 (x_low_raw, y_low_raw, x_high_raw, y_high_raw))
+
+        # Make the cutout array. Crop masks if any pixels fall outside of parent image:
+        # (NB: we must crop and not merely mask, to ensure that no indices fall outside parent image.)
+        self.cutout = image[y_low_final: y_high_final + 1, x_low_final: x_high_final + 1]
+        self.foreground_mask = self.input_foreground_mask[y_low_final-y_low_raw:y_high_final-y_low_raw + 1,
+                                                          x_low_final-x_low_raw:x_high_final-x_low_raw + 1]
+        self.background_mask = self.background_mask[y_low_final-y_low_raw:y_high_final-y_low_raw + 1,
+                                                    x_low_final-x_low_raw:x_high_final-x_low_raw + 1]
+        self.xy_offset = x_low_final, y_low_final
+
+        # Invalidate aperture if entirely outside image (not an error, but aperture cannot be used):
+        self.all_outside_image = (self.cutout.size <= 0)
+        if self.all_outside_image:
+            self.all_outside_image = True
+            self.any_foreground_outside_image = True
+            self.is_valid = False
+            return
+
+        # Compute pixels in both masks (should always be zero):
+        self.mask_overlap_pixel_count = np.sum(np.logical_and((self.foreground_mask == False),
+                                                              (self.background_mask == False)))
+
+        # Invalidate aperture if any foreground pixels were lost in cropping:
+        self.foreground_pixel_count = np.sum(self.foreground_mask == False)
+        input_foreground_pixel_count = np.sum(self.input_foreground_mask == False)
+        self.any_foreground_outside_image = \
+            bool(self.foreground_pixel_count != input_foreground_pixel_count)
+        if self.any_foreground_outside_image:
+            self.is_valid = False
+            return
+
+        # Compute background mask statistics:
+        self.background_pixel_count = np.sum(self.background_mask == False)
+        if self.background_pixel_count >= 1:
             self.background_level, self.background_std = calc_background_value(self.cutout,
                                                                                self.background_mask)
-            self.background_pixel_count = np.sum(self.background_mask == False)  # active pixels
-            self.mask_overlap_pixel_count = np.sum(np.logical_and((self.foreground_mask == False),
-                                                                  (self.background_mask == False)))
+        else:
+            self.background_level, self.background_std = 0.0, 0.0
 
         # Compute aperture statistics:
-        self.raw_flux = np.sum(self.cutout, where=np.logical_not(self.foreground_mask))
-        self.cutout_net = self.cutout - self.background_level
-        self.net_flux = np.sum(self.cutout_net, where=np.logical_not(self.foreground_mask))
-        self.stats = data_properties(data=self.cutout_net, mask=self.foreground_mask,
+        foreground_ma = np.ma.array(data=self.cutout, mask=self.foreground_mask)
+        self.foreground_max = np.ma.max(foreground_ma)
+        self.foreground_min = np.ma.min(foreground_ma)
+        self.raw_flux = np.ma.sum(foreground_ma)
+        cutout_net_ma = np.ma.array(self.cutout - self.background_level, mask=self.foreground_mask)
+        self.net_flux = np.sum(cutout_net_ma)
+        self.stats = data_properties(data=cutout_net_ma.data, mask=self.foreground_mask,
                                      background=self.background_level)
-        self.is_cropped = must_crop
+        self.xy_centroid = (self.stats.xcentroid.value + self.xy_offset[0],
+                            self.stats.ycentroid.value + self.xy_offset[1])
+        self.sigma = self.stats.semimajor_axis_sigma.value
+        self.fwhm = self.sigma * FWHM_PER_SIGMA
+        self.elongation = self.stats.elongation.value
         self.is_valid = True
 
     def __str__(self):
-        return 'Ap object at x,y = (' + str(self.xy_center.x) + ', ' + str(self.xy_center.y)
+        return 'Ap object at x,y = ' + str(self.xy_center.x) + ', ' + str(self.xy_center.y)
 
-    @property
-    def centroid(self):
-        return self.stats.xcentroid, self.stats.ycentroid
-
-    @property
     def flux_stddev(self, gain=1):
         """ Returns tuple of stats related to net flux of foreground pixels.
             Made a property so that gain can be passed in separately from Ap construction.
@@ -401,45 +425,28 @@ class Ap:
         flux_stddev = sqrt(flux_variance)
         return flux_stddev
 
-    @property
-    def sigma(self):
-        """ Returns width of flux, in pixels.
-            Conservatively calculated as semi-major axis sigma of a best-fit ellipse to flux.
-        :return: sigma width of flux, in pixels. [float]
-        """
-        return self.stats.semimajor_axis_sigma
-
-    @property
-    def fwhm(self):
-        """ Returns full-width at half-max of flux, in pixels. Computed from .sigma().
-        :return: estimate of FWHM full-width at half-maximum. [float]
-        """
-        return self.sigma * FWHM_PER_SIGMA
-
     def make_new_object(self, new_xy_center):
         """ Make new object from same image using new xy_center, with same mask shape.
-            Used mostly by .recenter().
-        :param new_xy_center: new x,y target center, in pixels relative to image origin. [XY object,
-            or 2-tuple or list of length 2]
+            Each subclass of Ap must implement .make_new_object(). Used mostly by .recenter().
         """
-        return Ap(self.image, new_xy_center, self.xy_origin, self.foreground_mask, self.background_mask)
+        raise NotImplementedError("Each subclass of Ap must implement .make_new_object().")
 
     def recenter(self, max_adjustment=None, max_iterations=3):
         """ Subclasses should inherit this unchanged.
-            (Whereas .make_new_object() must be written specially for each subclass).
+            (By contrast, .make_new_object() must be written specially for each subclass).
         :param max_adjustment:
         :param max_iterations:
         :return: newly recentered object. [PointSourceAp object]
         """
         previous_ap, next_ap = self, self
         for i in range(max_iterations):
-            previous_centroid = previous_ap.centroid
+            previous_centroid = previous_ap.xy_centroid
             new_xy_center = previous_centroid
             next_ap = self.make_new_object(new_xy_center)
-            new_centroid = next_ap.centroid
+            new_centroid = next_ap.xy_centroid
             adjustment = sqrt((new_centroid[0] - previous_centroid[0])**2 +
                               (new_centroid[1] - previous_centroid[1])**2)
-            if adjustment < max_adjustment:
+            if (max_adjustment is None) or (adjustment < max_adjustment):
                 return next_ap
             previous_ap = next_ap
         return next_ap
@@ -473,9 +480,9 @@ class PointSourceAp(Ap):
         self.annulus_outer_radius = self.annulus_inner_radius + self.background_width
         cutout_size = int(ceil(2 * self.annulus_outer_radius)) + 4  # generous, for safety.
         dxy_origin = DXY(int(round(xy_center.x - cutout_size / 2)),
-                       int(round(xy_center.y - cutout_size / 2)))
+                         int(round(xy_center.y - cutout_size / 2)))
         xy_center_in_cutout = xy_center - dxy_origin
-        foreground_mask = make_circular_mask(mask_size=cutout_size, xy=tuple(xy_center_in_cutout),
+        foreground_mask = make_circular_mask(mask_size=cutout_size, xy_origin=tuple(xy_center_in_cutout),
                                              radius=self.foreground_radius)
         background_mask_center_disc = np.logical_not(make_circular_mask(cutout_size,
                                                                         tuple(xy_center_in_cutout),
@@ -491,6 +498,9 @@ class PointSourceAp(Ap):
          """
         return PointSourceAp(self.image, new_xy_center,
                              self.foreground_radius, self.gap, self.background_width)
+
+    def __str__(self):
+        return 'PointSourceAp at x,y = ' + str(self.xy_center.x) + ', ' + str(self.xy_center.y)
 
 
 class MovingSourceAp(Ap):
@@ -520,16 +530,16 @@ class MovingSourceAp(Ap):
         self.background_inner_radius = self.foreground_radius + self.gap
         self.background_outer_radius = self.foreground_radius + self.gap + self.background_width
         xy_center = self.xy_start + (self.xy_end - self.xy_start) / 2
-        corner_x_values = (xy_start.x + self.background_outer_radius,
-                           xy_start.x - self.background_outer_radius,
-                           xy_end.x + self.background_outer_radius,
-                           xy_end.x - self.background_outer_radius)
+        corner_x_values = (self.xy_start.x + self.background_outer_radius,
+                           self.xy_start.x - self.background_outer_radius,
+                           self.xy_end.x + self.background_outer_radius,
+                           self.xy_end.x - self.background_outer_radius)
         x_min = min(corner_x_values)
         x_max = max(corner_x_values)
-        corner_y_values = (xy_start.y + self.background_outer_radius,
-                           xy_start.y - self.background_outer_radius,
-                           xy_end.y + self.background_outer_radius,
-                           xy_end.y - self.background_outer_radius)
+        corner_y_values = (self.xy_start.y + self.background_outer_radius,
+                           self.xy_start.y - self.background_outer_radius,
+                           self.xy_end.y + self.background_outer_radius,
+                           self.xy_end.y - self.background_outer_radius)
         y_min = min(corner_y_values)
         y_max = max(corner_y_values)
         cutout_size = DXY(int(round(x_max - x_min + 4)), int(round(y_max - y_min + 4)))
@@ -549,6 +559,28 @@ class MovingSourceAp(Ap):
         background_mask = np.logical_or(background_outer_mask,
                                         np.logical_not(background_inner_mask))
         super().__init__(image, xy_center, dxy_offset, foreground_mask, background_mask)
+        self.motion = (self.xy_end - self.xy_start).length
+        sigma2_motion = (self.motion ** 2) / 12.0
+        sigma2 = (1 * (self.stats.semimajor_axis_sigma.value ** 2 - sigma2_motion) +
+                  2 * (self.stats.semiminor_axis_sigma.value ** 2)) / 3
+        self.sigma = sqrt(sigma2)
+        self.fwhm = self.sigma * FWHM_PER_SIGMA
+
+    def make_new_object(self, new_xy_center):
+        """ Make new object using new xy_center. Overrides parent-class method.
+            Masks will be recreated by the constructor, using new xy_center.
+        """
+        if not isinstance(new_xy_center, XY):
+            new_xy_center = XY(new_xy_center[0], new_xy_center[1])
+        current_xy_center = self.xy_start + (self.xy_end - self.xy_start) / 2
+        dxy_shift = new_xy_center - current_xy_center
+        new_xy_start = self.xy_start + dxy_shift
+        new_xy_end = self.xy_end + dxy_shift
+        return MovingSourceAp(self.image, new_xy_start, new_xy_end,
+                              self.foreground_radius, self.gap, self.background_width)
+
+    def __str__(self):
+        return 'MovingSourceAp at x,y = ' + str(self.xy_center.x) + ', ' + str(self.xy_center.y)
 
 
 _____IMAGE_and_GEOMETRY_SUPPORT____________________________________ = 0

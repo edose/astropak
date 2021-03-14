@@ -296,7 +296,8 @@ class Ap:
         Masks are foreground (light source) and background (surrounding sky).
         Any specified pixels that would fall outside parent image are excluded (cutout is cropped).
     """
-    def __init__(self, image, xy_center, xy_offset, foreground_mask, background_mask=None):
+    def __init__(self, image, xy_center, xy_offset, foreground_mask, background_mask=None,
+                 source_id='', obs_id=''):
         """ General constructor, from explicitly passed-in parent data array and 2 mask arrays.
         :param image: the parent image array [numpy ndarray; to pass in CCDData or numpy masked array,
                    please see separate, specific constructors, below].
@@ -314,6 +315,10 @@ class Ap:
                    If zero [int or float], will be set to zero (that is, background is not used).
                    Otherwise (normal case), must be boolean array in same shape as foreground_mask.
                    Numpy mask convention (True -> pixel masked out, unused).
+        :param source_id: optional string describing the source (e.g., comp star ID, MP number) that this
+                   aperture is intended to measure. [string]
+        :param obs_id: optional observation ID string, will typically be unique among all observations
+                   (aperture objects) in one image. [string]
         """
         # Save inputs:
         self.image = image
@@ -321,6 +326,8 @@ class Ap:
         xy_input_offset = xy_offset if isinstance(xy_offset, XY) else XY(xy_offset[0], xy_offset[1])
         self.input_foreground_mask = foreground_mask
         self.input_background_mask = background_mask
+        self.source_id = str(source_id)
+        self.obs_id = str(obs_id)
 
         # Default values:
         self.is_valid = None
@@ -460,17 +467,21 @@ class PointSourceAp(Ap):
             to an annulus--for example, to work close to the parent image's edges, then that will
             definitely require a new sibling class to this one so that recentering retains the mask shapes.)
     """
-    def __init__(self, image, xy_center, foreground_radius, gap, background_width):
+    def __init__(self, image, xy_center, foreground_radius, gap, background_width, source_id, obs_id):
         """ Main and probably sole constructor for this class.
         :param image: the parent image array [numpy ndarray].
         :param xy_center: center pixel position in parent. This should be the best prior estimate
-                   of the light source's centroid at mid-exposure, as (x,y) (not as numpy [y, x] array).
-                   [XY object, 2-tuple, 2-list, or 2-array of floats]
+               of the light source's centroid at mid-exposure, as (x,y) (not as numpy [y, x] array).
+               [XY object, 2-tuple, 2-list, or 2-array of floats]
         :param foreground_radius: radial size of foreground around point source, in pixels. [float]
         :param gap: width of gap, difference between radius of foreground and inside radius of
-                        background annulus, in pixels. [float]
+               background annulus, in pixels. [float]
         :param background_width: width of annulus, difference between inside and outside radii
-                   of background annulus, in pixels.
+               of background annulus, in pixels.
+        :param source_id: optional string describing the source (e.g., comp star ID, MP number) that this
+               aperture is intended to measure. [string]
+        :param obs_id: optional observation ID string, will typically be unique among all observations
+               (aperture objects) in one image. [string]
         """
         xy_center = xy_center if isinstance(xy_center, XY) else XY(xy_center[0], xy_center[1])
         self.foreground_radius = foreground_radius
@@ -490,14 +501,15 @@ class PointSourceAp(Ap):
         background_mask_outer_disc = make_circular_mask(cutout_size, tuple(xy_center_in_cutout),
                                                         self.annulus_outer_radius)
         background_mask = np.logical_or(background_mask_center_disc, background_mask_outer_disc)
-        super().__init__(image, xy_center, dxy_origin, foreground_mask, background_mask)
+        super().__init__(image, xy_center, dxy_origin, foreground_mask, background_mask, source_id, obs_id)
 
     def make_new_object(self, new_xy_center):
         """ Make new object using new xy_center. Overrides parent-class method.
             Masks will be recreated by the constructor, using new xy_center.
          """
         return PointSourceAp(self.image, new_xy_center,
-                             self.foreground_radius, self.gap, self.background_width)
+                             self.foreground_radius, self.gap, self.background_width,
+                             self.source_id, self.obs_id)
 
     def __str__(self):
         return 'PointSourceAp at x,y = ' + str(self.xy_center.x) + ', ' + str(self.xy_center.y)
@@ -510,7 +522,8 @@ class MovingSourceAp(Ap):
             to a (pill-shaped) annulus--for example, to work close to the parent image's edges, that will
             definitely require a new sibling class to this one so that recentering retains the mask shapes.)
         """
-    def __init__(self, image, xy_start, xy_end, foreground_radius, gap, background_width):
+    def __init__(self, image, xy_start, xy_end, foreground_radius, gap, background_width,
+                 source_id, obs_id):
         """ Main and probably sole constructor for this class.
         :param image: the parent image array [numpy ndarray].
         :param xy_start: x,y pixel position in parent image of the beginning of the MP's motion.
@@ -521,6 +534,10 @@ class MovingSourceAp(Ap):
                Does not include effect of MP motion. [float]
         :param gap: Gap in pixels between foreground mask and background mask. [float]
         :param background_width: Width in pixels of background mask. [float]
+        :param source_id: optional string describing the source (e.g., comp star ID, MP number) that this
+               aperture is intended to measure. [string]
+        :param obs_id: optional observation ID string, will typically be unique among all observations
+               (aperture objects) in one image. [string]
         """
         self.xy_start = xy_start if isinstance(xy_start, XY) else XY(xy_start[0], xy_start[1])
         self.xy_end = xy_end if isinstance(xy_end, XY) else XY(xy_end[0], xy_end[1])
@@ -558,7 +575,7 @@ class MovingSourceAp(Ap):
                                                self.background_outer_radius)
         background_mask = np.logical_or(background_outer_mask,
                                         np.logical_not(background_inner_mask))
-        super().__init__(image, xy_center, dxy_offset, foreground_mask, background_mask)
+        super().__init__(image, xy_center, dxy_offset, foreground_mask, background_mask, source_id, obs_id)
         self.motion = (self.xy_end - self.xy_start).length
         sigma2_motion = (self.motion ** 2) / 12.0
         sigma2 = (1 * (self.stats.semimajor_axis_sigma.value ** 2 - sigma2_motion) +
@@ -577,7 +594,8 @@ class MovingSourceAp(Ap):
         new_xy_start = self.xy_start + dxy_shift
         new_xy_end = self.xy_end + dxy_shift
         return MovingSourceAp(self.image, new_xy_start, new_xy_end,
-                              self.foreground_radius, self.gap, self.background_width)
+                              self.foreground_radius, self.gap, self.background_width,
+                              self.source_id, self.obs_id)
 
     def __str__(self):
         return 'MovingSourceAp at x,y = ' + str(self.xy_center.x) + ', ' + str(self.xy_center.y)

@@ -238,6 +238,25 @@ class Test_Class_Ap:
         expected_background_mask = np.full(shape=(41, 41), fill_value=True)
         assert np.array_equal(ap.background_mask, expected_background_mask)
 
+    def test_ids(self, get_image):
+        hdr, im = get_image
+        foreground_mask = np.full(shape=(41, 41), fill_value=True)
+        background_mask = foreground_mask.copy()
+        foreground_mask[25:28, 11:17] = False
+        background_mask[26:30, 9:14] = False
+        ap1 = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                       foreground_mask=foreground_mask, background_mask=background_mask,
+                       source_id='comp star 1', obs_id='345')
+        ap2 = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                       foreground_mask=foreground_mask, background_mask=background_mask,
+                       source_id='MP_3456', obs_id='haha')
+        ap3 = image.Ap(im, xy_center=(1000, 1100), xy_offset=(980, 1080),
+                       foreground_mask=foreground_mask, background_mask=background_mask)
+        assert (ap1.source_id, ap1.obs_id) == ('comp star 1', '345')
+        assert (ap2.source_id, ap2.obs_id) == ('MP_3456', 'haha')
+        assert (ap3.source_id, ap3.obs_id) == ('', '')
+
+
     def test_constructor_exceptions(self, get_image):
         hdr, im = get_image
         foreground_mask = np.full(shape=(41, 41), fill_value=True)
@@ -376,6 +395,13 @@ class Test_Class_PointSourceAp:
         assert ap.any_foreground_outside_image is True
         assert ap.mask_overlap_pixel_count is None
 
+    def test_constructor_ids(self, get_image):
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(1476.3, 1243.7),
+                                 foreground_radius=9, gap=6, background_width=5,
+                                 source_id='xx', obs_id='xyz')
+        assert (ap.source_id, ap.obs_id) == ('xx', 'xyz')
+
     def test_make_new_object(self, get_image):
         hdr, im = get_image
         ap = image.PointSourceAp(im, xy_center=(1476, 1244),
@@ -397,7 +423,6 @@ class Test_Class_PointSourceAp:
         assert ap2.is_valid
         assert ap2.xy_center == ap.xy_centroid
         assert ap2.xy_centroid == pytest.approx((1476.302, 1243.275), abs=0.002)
-
 
 
 class Test_Class_MovingSourceAp:
@@ -445,6 +470,13 @@ class Test_Class_MovingSourceAp:
         assert ap.xy_centroid[1] == pytest.approx(1507.08, abs=0.05)
         assert ap.sigma == pytest.approx(3.15, abs=0.05)
         assert ap.fwhm == pytest.approx(7.41, abs=0.05)
+
+    def test_constructor_ids(self, get_image):
+        hdr, im = get_image
+        ap = image.PointSourceAp(im, xy_center=(1476.3, 1243.7),
+                                 foreground_radius=9, gap=6, background_width=5,
+                                 source_id='haha', obs_id='hoho')
+        assert (ap.source_id, ap.obs_id) == ('haha', 'hoho')
 
     def test_make_new_object(self, get_image):
         hdr, im = get_image

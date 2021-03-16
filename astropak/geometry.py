@@ -188,14 +188,16 @@ class Rectangle_in_2D:
     def contains_points_unitgrid(self, x_min, x_max, y_min, y_max, include_edges=True):
         """ Returns True for each point in a unit grid iff this rectangle contains that point,
             else return False. Numpy-optimized case.
-            Unit grid x: x_min, x_min+1, x_min+2, ... , x_max. Same for y. All 4 values must be integers.
+            Unit grid x: x_min, x_min+1, x_min+2, ... , x_max. Same for y.
+            All 4 input values must be integers.
+            Return array is (x,y), NOT numpy index convention.
         :param x_min: [integer]
         :param x_max: must >= x_min. [integer]
         :param y_min: [integer]
         :param y_max: must >= y_min. [integer]
         :param include_edges: True iff a point on rectangle edge is to count as contained. [boolean]
         :return: array, True iff each corresponding point is contained by rectangle.
-                 [numpy array of booleans]
+                 [Indices are (x,y), NOT numpy index convention. [numpy array of booleans]
         """
         if any(not isinstance(val, int) for val in (x_min, x_max, y_min, y_max)):
             raise TypeError('All 4 grid edges must be integers but are not.')
@@ -254,15 +256,18 @@ class Circle_in_2D:
         return [distance2 < self.radius ** 2 for distance2 in distances2]
 
     def contains_points_unitgrid(self, x_min, x_max, y_min, y_max, include_edges=True):
-        """ Returns True for each point in a unit grid iff this circle contains that point,
-            else return False. Numpy-optimized case.
-            Unit grid x: x_min, x_min+1, x_min+2, ... , x_max. Same for y. All 4 values must be integers.
+        """ Returns True for each point in a unit grid (e.g., pixel grid) iff this circle contains
+            that point, else return False. Numpy-optimized case.
+            Unit grid x: x_min, x_min+1, x_min+2, ... , x_max. Same for y.
+            All 4 input values must be integers.
+            Return array is (x,y), NOT numpy index convention.
         :param x_min: [integer]
         :param x_max: must >= x_min. [integer]
         :param y_min: [integer]
         :param y_max: must >= y_min. [integer]
         :param include_edges: True iff a point on circle edge is to count as contained. [boolean]
-        :return: array, True iff each corresponding point is contained by circle. [numpy array of booleans]
+        :return: array, True iff each corresponding point is contained by circle.
+                 Indices are (x,y), NOT numpy index convention. [numpy array of booleans]
         """
         if any(not isinstance(val, int) for val in (x_min, x_max, y_min, y_max)):
             raise TypeError('All 4 grid edges must be integers but are not.')

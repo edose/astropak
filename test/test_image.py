@@ -318,18 +318,18 @@ class Test_Class_PointSourceAp:
         assert ap.background_pixel_count == np.sum(ap.input_background_mask == False) == 549
         # ADUs and fluxes:
         assert ap.background_level == pytest.approx(257, abs=1)
-        assert ap.background_std == pytest.approx(13.11, abs=0.1)
+        assert ap.background_std == pytest.approx(13.84, abs=0.1)
         assert ap.foreground_max == 1065
         assert ap.foreground_min == 234
-        assert ap.raw_flux == pytest.approx(96550, abs=10)
-        assert ap.net_flux == pytest.approx(31015, abs=10)
-        assert ap.flux_stddev(gain=1.57) == pytest.approx(248.2, abs=0.1)
+        assert ap.raw_flux == pytest.approx(96364, abs=10)
+        assert ap.net_flux == pytest.approx(30829, abs=10)
+        assert ap.flux_stddev(gain=1.57) == pytest.approx(247.95, abs=0.1)
         # Source flux position & shape:
-        assert ap.xy_centroid[0] == pytest.approx(1476.31, abs=0.01)
-        assert ap.xy_centroid[1] == pytest.approx(1243.31, abs=0.01)
+        assert ap.xy_centroid[0] == pytest.approx(1476.23, abs=0.01)
+        assert ap.xy_centroid[1] == pytest.approx(1243.39, abs=0.01)
         assert ap.sigma == pytest.approx(2.81, abs=0.1)
         assert ap.fwhm == pytest.approx(6.63, abs=0.1)
-        assert ap.elongation == pytest.approx(1.077, abs=0.02)
+        assert ap.elongation == pytest.approx(1.086, abs=0.02)
 
     def test_constructor_background_cropped_low(self, get_image):
         hdr, im = get_image
@@ -422,7 +422,7 @@ class Test_Class_PointSourceAp:
         ap2 = ap.recenter()
         assert ap2.is_valid
         assert ap2.xy_center == ap.xy_centroid
-        assert ap2.xy_centroid == pytest.approx((1476.302, 1243.275), abs=0.002)
+        assert ap2.xy_centroid == pytest.approx((1476.310, 1243.271), abs=0.002)
 
 
 class Test_Class_MovingSourceAp:
@@ -454,22 +454,24 @@ class Test_Class_MovingSourceAp:
         assert ap.xy_start == XY(2354, 1505)
         assert ap.xy_end == XY(2361, 1510)
         # Shapes and pixel counts:
-        assert ap.cutout.shape == ap.foreground_mask.shape == ap.background_mask.shape == (49, 51)
-        assert ap.foreground_pixel_count == np.sum(ap.input_foreground_mask == False) == 408
-        assert ap.background_pixel_count == np.sum(ap.input_background_mask == False) == 634
+        assert ap.cutout.shape == ap.foreground_mask.shape == ap.background_mask.shape == (49, 51)  # (y,x)
+        assert ap.foreground_pixel_count == 408
+        assert ap.foreground_pixel_count == np.sum(ap.input_foreground_mask == False)
+        assert ap.background_pixel_count == 633
+        assert ap.background_pixel_count == np.sum(ap.input_background_mask == False)
         # ADUs and fluxes:
         assert ap.background_level == pytest.approx(254, abs=1)
-        assert ap.background_std == pytest.approx(14.7, abs=0.2)
+        assert ap.background_std == pytest.approx(15.1, abs=0.2)
         assert ap.foreground_max == 1817
-        assert ap.foreground_min == 226
-        assert ap.raw_flux == pytest.approx(210697, abs=100)
-        assert ap.net_flux == pytest.approx(107000, abs=100)
+        assert ap.foreground_min == 224
+        assert ap.raw_flux == pytest.approx(210000, abs=100)
+        assert ap.net_flux == pytest.approx(106368, abs=100)
         assert ap.flux_stddev(gain=1.57) == pytest.approx(366, abs=1)
         # Source flux position & shape:
-        assert ap.xy_centroid[0] == pytest.approx(2357.65, abs=0.05)
-        assert ap.xy_centroid[1] == pytest.approx(1507.08, abs=0.05)
-        assert ap.sigma == pytest.approx(3.15, abs=0.05)
-        assert ap.fwhm == pytest.approx(7.41, abs=0.05)
+        assert ap.xy_centroid[0] == pytest.approx(2357.56, abs=0.05)
+        assert ap.xy_centroid[1] == pytest.approx(1507.14, abs=0.05)
+        assert ap.sigma == pytest.approx(3.14, abs=0.05)
+        assert ap.fwhm == pytest.approx(7.40, abs=0.05)
 
     def test_constructor_ids(self, get_image):
         hdr, im = get_image
@@ -481,7 +483,8 @@ class Test_Class_MovingSourceAp:
     def test_make_new_object(self, get_image):
         hdr, im = get_image
         ap = image.MovingSourceAp(im, xy_start=(2354, 1505), xy_end=(2360, 1511),
-                                  foreground_radius=9, gap=6, background_width=5)
+                                  foreground_radius=9, gap=6, background_width=5,
+                                  source_id='1', obs_id='22')
         ap2 = ap.make_new_object(new_xy_center=(2086, 1570))
         assert ap2.xy_center == (2086, 1570)
         assert np.array_equal(ap.foreground_mask, ap2.foreground_mask)
@@ -560,16 +563,17 @@ def test_distance_to_line():  # OK 2021-01-28.
 
 
 def test_make_circular_mask():
-    cm = image.make_circular_mask(25, (12.2, 15.5), 8)
+    cm = image.make_circular_mask(mask_size=25, xy_origin=(12.2, 15.5), radius=8)
     assert isinstance(cm, np.ndarray)
     assert cm.dtype == np.bool
     assert cm.shape == (25, 25)
     assert np.sum(cm == False) == 200  # number of valid pixels.
-    assert not np.any(cm[12:18, 8:14])
+    # assert not np.any(cm[12:18, 8:14])
+    assert not np.any(cm[8:14, 12:18])  # numpy index and mask-boolean conventions.
 
 
 def test_make_pill_mask():
-    pm = image.make_pill_mask((41, 41), (7, 20), (11, 15), 4)
+    pm = image.make_pill_mask(mask_shape_xy=(41, 41), xya=(7, 20), xyb=(11, 15), radius=4)
     assert isinstance(pm, np.ndarray)
     assert pm.shape == (41, 41)
     assert np.sum(pm == False) == 100  # number of valid pixels.

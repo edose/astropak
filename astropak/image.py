@@ -373,7 +373,6 @@ class Ap:
         # Invalidate aperture if entirely outside image (not an error, but aperture cannot be used):
         self.all_outside_image = (self.cutout.size <= 0)
         if self.all_outside_image:
-            self.all_outside_image = True
             self.any_foreground_outside_image = True
             self.is_valid = False
             return
@@ -410,6 +409,7 @@ class Ap:
                                      background=self.background_level)
         self.xy_centroid = (self.stats.xcentroid.value + self.xy_offset[0],
                             self.stats.ycentroid.value + self.xy_offset[1])
+        # Sigma and FWHM apply to spreading *other than* motion (i.e., approx. perpendicular to motion).
         self.sigma = self.stats.semimajor_axis_sigma.value
         self.fwhm = self.sigma * FWHM_PER_SIGMA
         self.elongation = self.stats.elongation.value
@@ -467,7 +467,8 @@ class PointSourceAp(Ap):
             to an annulus--for example, to work close to the parent image's edges, then that will
             definitely require a new sibling class to this one so that recentering retains the mask shapes.)
     """
-    def __init__(self, image, xy_center, foreground_radius, gap, background_width, source_id, obs_id):
+    def __init__(self, image, xy_center, foreground_radius, gap, background_width,
+                 source_id=None, obs_id=None):
         """ Main and probably sole constructor for this class.
         :param image: the parent image array [numpy ndarray].
         :param xy_center: center pixel position in parent. This should be the best prior estimate
@@ -478,10 +479,10 @@ class PointSourceAp(Ap):
                background annulus, in pixels. [float]
         :param background_width: width of annulus, difference between inside and outside radii
                of background annulus, in pixels.
-        :param source_id: optional string describing the source (e.g., comp star ID, MP number) that this
-               aperture is intended to measure. [string]
-        :param obs_id: optional observation ID string, will typically be unique among all observations
-               (aperture objects) in one image. [string]
+        :param source_id: string describing the source (e.g., comp star ID, MP number) that this
+               aperture is intended to measure. A tag only, not used in calculations. [string]
+        :param obs_id: observation ID string, will typically be unique among all observations
+               (aperture objects) in one image. A tag only, not used in calculations. [string]
         """
         xy_center = xy_center if isinstance(xy_center, XY) else XY(xy_center[0], xy_center[1])
         self.foreground_radius = foreground_radius
@@ -523,7 +524,7 @@ class MovingSourceAp(Ap):
             definitely require a new sibling class to this one so that recentering retains the mask shapes.)
         """
     def __init__(self, image, xy_start, xy_end, foreground_radius, gap, background_width,
-                 source_id, obs_id):
+                 source_id=None, obs_id=None):
         """ Main and probably sole constructor for this class.
         :param image: the parent image array [numpy ndarray].
         :param xy_start: x,y pixel position in parent image of the beginning of the MP's motion.
@@ -535,9 +536,9 @@ class MovingSourceAp(Ap):
         :param gap: Gap in pixels between foreground mask and background mask. [float]
         :param background_width: Width in pixels of background mask. [float]
         :param source_id: optional string describing the source (e.g., comp star ID, MP number) that this
-               aperture is intended to measure. [string]
+               aperture is intended to measure. A tag only, not used in calculations. [string]
         :param obs_id: optional observation ID string, will typically be unique among all observations
-               (aperture objects) in one image. [string]
+               (aperture objects) in one image. A tag only, not used in calculations. [string]
         """
         self.xy_start = xy_start if isinstance(xy_start, XY) else XY(xy_start[0], xy_start[1])
         self.xy_end = xy_end if isinstance(xy_end, XY) else XY(xy_end[0], xy_end[1])
@@ -559,18 +560,18 @@ class MovingSourceAp(Ap):
                            self.xy_end.y - self.background_outer_radius)
         y_min = min(corner_y_values)
         y_max = max(corner_y_values)
-        cutout_size = DXY(int(round(x_max - x_min + 4)), int(round(y_max - y_min + 4)))
-        dxy_offset = DXY(int(round(xy_center.x) - cutout_size.dx / 2.0),
-                         int(round(xy_center.y) - cutout_size.dy / 2.0))
+        dxy_cutout_size = DXY(int(round(x_max - x_min + 4)), int(round(y_max - y_min + 4)))
+        dxy_offset = DXY(int(round(xy_center.x) - dxy_cutout_size.dx / 2.0),
+                         int(round(xy_center.y) - dxy_cutout_size.dy / 2.0))
         xy_start_cutout = self.xy_start - dxy_offset
         xy_end_cutout = self.xy_end - dxy_offset
-        foreground_mask = make_pill_mask(tuple(cutout_size),
+        foreground_mask = make_pill_mask(tuple(dxy_cutout_size),
                                          tuple(xy_start_cutout), tuple(xy_end_cutout),
                                          self.foreground_radius)
-        background_inner_mask = make_pill_mask(tuple(cutout_size),
+        background_inner_mask = make_pill_mask(tuple(dxy_cutout_size),
                                                tuple(xy_start_cutout), tuple(xy_end_cutout),
                                                self.background_inner_radius)
-        background_outer_mask = make_pill_mask(tuple(cutout_size),
+        background_outer_mask = make_pill_mask(tuple(dxy_cutout_size),
                                                tuple(xy_start_cutout), tuple(xy_end_cutout),
                                                self.background_outer_radius)
         background_mask = np.logical_or(background_outer_mask,
@@ -649,32 +650,36 @@ def calc_cutout_offsets(xy_center, cutout_radius):
 def make_circular_mask(mask_size, xy_origin, radius):
     """ Construct a traditional mask array for small, stationary object, esp. for a star.
         Unmask only those pixels *within* radius pixels of a given point. Invert the mask separately to
-            mask the interior. Convention: pixel True -> VALID (opposite of numpy).
-    :param mask_size: edge size of new mask array. [int]
+            mask the interior.
+        Numpy mask bookean convention: pixel True -> MASKED OUT.
+        Numpy indexing convention: (y,x)
+    :param mask_size: edge size of new mask array, which will be a square. [int]
     :param xy_origin: (x, y) pixel coordinates of circle origin, rel. to mask origin. [2-tuple of floats]
     :param radius: radius of ends and half-width of center region. [float]
-    :return: mask array, True -> MASKED out/invalid (numpy convention). [np.ndarray of booleans]
+    :return: mask array, True -> MASKED out/invalid (numpy boolean convention),
+             and indexed as (y,x) (numpy indexing convention). [np.ndarray of booleans]
     """
     xy_origin = xy_origin if isinstance(xy_origin, XY) else XY(xy_origin[0], xy_origin[1])
     circle = Circle_in_2D(xy_origin=xy_origin, radius=radius)
     is_inside = circle.contains_points_unitgrid(0, mask_size - 1, 0, mask_size - 1, include_edges=True)
-    mask = np.logical_not(is_inside)  # numpy convention.
+    mask = np.transpose(np.logical_not(is_inside))  # render in numpy mask-boolean and index conventions.
     return mask
 
 
-def make_pill_mask(mask_size, xya, xyb, radius):
+def make_pill_mask(mask_shape_xy, xya, xyb, radius):
     """ Construct a mask array for MP in motion: unmask only those pixels within radius pixels of
         any point in line segment from xya to xyb. Convention: pixel True -> VALID (opposite of numpy).
-    :param mask_size: (x,y) size of array to generate. [2-tuple of ints]
+    :param mask_shape_xy: (x,y) size of array to generate. [2-tuple of ints]
     :param xya: (xa, ya) pixel coordinates of start-motion point. [XY object, or 2-tuple of floats]
     :param xyb: (xb, yb) pixel coordinates of end-motion point. [XY object, or 2-tuple of floats]
     :param radius: radius of ends and half-width of center region. [float]
-    :return: mask array, True -> MASKED out/invalid (numpy convention). [np.ndarray of booleans]
+    :return: mask array, True -> MASKED out/invalid (numpy boolean convention),
+             and indexed as (y,x) (numpy indexing convention). [np.ndarray of booleans]
     """
     xya = xya if isinstance(xya, XY) else XY(xya[0], xya[1])
     xyb = xyb if isinstance(xyb, XY) else XY(xyb[0], xyb[1])
     if xya == xyb:
-        return make_circular_mask(max(mask_size), xya, radius)
+        return make_circular_mask(max(mask_shape_xy), xya, radius)
 
     # Make circle and rectangle objects:
     circle_a = Circle_in_2D(xya, radius)
@@ -689,11 +694,19 @@ def make_pill_mask(mask_size, xya, xyb, radius):
     rectangle = Rectangle_in_2D(xy_corner1, xy_corner2, xy_corner3)
 
     # Make mask, including edges so no gaps can appear at rectangle corners:
-    circle_a_contains = circle_a.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
-    circle_b_contains = circle_b.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
-    rectangle_contains = rectangle.contains_points_unitgrid(0, mask_size[0] - 1, 0, mask_size[1] - 1, True)
-    any_contains = np.logical_or(np.logical_or(circle_a_contains, circle_b_contains), rectangle_contains)
-    mask = np.logical_not(any_contains)  # numpy convention.
+    circle_a_contains = circle_a.contains_points_unitgrid(0, mask_shape_xy[1] - 1,
+                                                          0, mask_shape_xy[0] - 1, True)
+    circle_b_contains = circle_b.contains_points_unitgrid(0, mask_shape_xy[1] - 1,
+                                                          0, mask_shape_xy[0] - 1, True)
+    rectangle_contains = rectangle.contains_points_unitgrid(0, mask_shape_xy[1] - 1,
+                                                            0, mask_shape_xy[0] - 1, True)
+    # Render each in numpy mask-boolean and index conventions:
+    circle_a_mask = np.transpose(np.logical_not(circle_a_contains))
+    circle_b_mask = np.transpose(np.logical_not(circle_b_contains))
+    rectangle_mask = np.transpose(np.logical_not(rectangle_contains))
+    mask = np.logical_and(np.logical_and(circle_a_mask, circle_b_mask), rectangle_mask)
+    # any_contains = np.logical_or(np.logical_or(circle_a_contains, circle_b_contains), rectangle_contains)
+    # mask = np.transpose(np.logical_not(any_contains))
     return mask
 
 

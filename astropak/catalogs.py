@@ -127,9 +127,12 @@ class Refcat2:
 
     def select_sloan_ri_color(self, min_sloan_ri=None, max_sloan_ri=None):
         sloan_ri_color = self.df_selected['r'] - self.df_selected['i']
-        above_min = [True if min_sloan_ri is None else (ri >= min_sloan_ri) for ri in sloan_ri_color]
-        below_max = [True if max_sloan_ri is None else (ri <= max_sloan_ri) for ri in sloan_ri_color]
-        rows_to_keep = [a and b for (a, b) in zip(above_min, below_max)]
+        # above_min = [True if min_sloan_ri is None else (ri >= min_sloan_ri) for ri in sloan_ri_color]
+        # below_max = [True if max_sloan_ri is None else (ri <= max_sloan_ri) for ri in sloan_ri_color]
+        above_min = [(ri >= min_sloan_ri) for ri in sloan_ri_color]
+        below_max = [(ri <= max_sloan_ri) for ri in sloan_ri_color]
+        ri_valid = [ri is not None for ri in sloan_ri_color]
+        rows_to_keep = [a and b and c for (a, b, c) in zip(above_min, below_max, ri_valid)]
         self.df_selected = self.df_selected.loc[rows_to_keep, :]
 
     def select_dgaia(self):

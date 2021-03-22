@@ -1,22 +1,23 @@
-__author__ = "Eric Dose :: Albuquerque"
-
 """ Module astrosupport.image.
     Image, FITS, aperture handling.
     Forked from photrix.image 2020-10-23 EVD.
 """
 
+__author__ = "Eric Dose :: Albuquerque"
+
+
 # Python core packages:
 import os
 from datetime import timezone, timedelta
-from math import ceil, cos, sin, pi, sqrt, log
-import numbers
+from math import ceil, cos, sin, pi, sqrt
 
 # External packages:
 import numpy as np
 import pandas as pd
 import astropy.io.fits
 from dateutil.parser import parse
-from photutils import make_source_mask, data_properties
+from photutils.morphology import data_properties
+from photutils.segmentation import make_source_mask
 from astropy.stats import sigma_clipped_stats
 
 # Author's packages:
@@ -405,13 +406,18 @@ class Ap:
         self.raw_flux = np.ma.sum(foreground_ma)
         cutout_net_ma = np.ma.array(self.cutout - self.background_level, mask=self.foreground_mask)
         self.net_flux = np.sum(cutout_net_ma)
+        # self.stats = data_properties(data=cutout_net_ma.data, mask=self.foreground_mask,
+        #                              background=self.background_level)
+        # scalar background fails photutils v.1.1.0, must have array matching shape of data & mask:
         self.stats = data_properties(data=cutout_net_ma.data, mask=self.foreground_mask,
-                                     background=self.background_level)
-        self.xy_centroid = (self.stats.xcentroid.value + self.xy_offset[0],
-                            self.stats.ycentroid.value + self.xy_offset[1])
+                                     background=np.full_like(cutout_net_ma.data,
+                                                             fill_value=self.background_level))
+        self.xy_centroid = (self.stats.xcentroid + self.xy_offset[0],
+                            self.stats.ycentroid + self.xy_offset[1])
         # Sigma and FWHM apply to spreading *other than* motion (i.e., approx. perpendicular to motion).
-        self.sigma = self.stats.semimajor_axis_sigma.value
-        self.fwhm = self.sigma * FWHM_PER_SIGMA
+        self.sigma = self.stats.semimajor_sigma.value
+        # self.fwhm = self.sigma * FWHM_PER_SIGMA  # obsolete.
+        self.fwhm = self.stats.fwhm.value  # given by photutils v.1.1.0
         self.elongation = self.stats.elongation.value
         self.is_valid = True
 
@@ -453,7 +459,7 @@ class Ap:
             new_centroid = next_ap.xy_centroid
             adjustment = sqrt((new_centroid[0] - previous_centroid[0])**2 +
                               (new_centroid[1] - previous_centroid[1])**2)
-            if (max_adjustment is None) or (adjustment < max_adjustment):
+            if (max_adjustment is not None) and (adjustment < max_adjustment):
                 return next_ap
             previous_ap = next_ap
         return next_ap
@@ -578,9 +584,9 @@ class MovingSourceAp(Ap):
                                         np.logical_not(background_inner_mask))
         super().__init__(image, xy_center, dxy_offset, foreground_mask, background_mask, source_id, obs_id)
         self.motion = (self.xy_end - self.xy_start).length
-        sigma2_motion = (self.motion ** 2) / 12.0
-        sigma2 = (1 * (self.stats.semimajor_axis_sigma.value ** 2 - sigma2_motion) +
-                  2 * (self.stats.semiminor_axis_sigma.value ** 2)) / 3
+        sigma2_motion = (self.motion ** 2) / 12.0  # sigma2 of uniform segment distribution.
+        sigma2 = (1 * (self.stats.semimajor_sigma.value ** 2 - sigma2_motion) +
+                  2 * (self.stats.semiminor_sigma.value ** 2)) / 3
         self.sigma = sqrt(sigma2)
         self.fwhm = self.sigma * FWHM_PER_SIGMA
 

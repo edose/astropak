@@ -680,7 +680,7 @@ def make_pill_mask(mask_shape_xy, xya, xyb, radius):
     :param xyb: (xb, yb) pixel coordinates of end-motion point. [XY object, or 2-tuple of floats]
     :param radius: radius of ends and half-width of center region. [float]
     :return: mask array, True -> MASKED out/invalid (numpy boolean convention),
-             and indexed as (y,x) (numpy indexing convention). [np.ndarray of booleans]
+             and indexed as (x,y) (indexing convention is x,y-image, not numpy). [np.ndarray of booleans]
     """
     xya = xya if isinstance(xya, XY) else XY(xya[0], xya[1])
     xyb = xyb if isinstance(xyb, XY) else XY(xyb[0], xyb[1])
@@ -700,16 +700,19 @@ def make_pill_mask(mask_shape_xy, xya, xyb, radius):
     rectangle = Rectangle_in_2D(xy_corner1, xy_corner2, xy_corner3)
 
     # Make mask, including edges so no gaps can appear at rectangle corners:
-    circle_a_contains = circle_a.contains_points_unitgrid(0, mask_shape_xy[1] - 1,
-                                                          0, mask_shape_xy[0] - 1, True)
-    circle_b_contains = circle_b.contains_points_unitgrid(0, mask_shape_xy[1] - 1,
-                                                          0, mask_shape_xy[0] - 1, True)
-    rectangle_contains = rectangle.contains_points_unitgrid(0, mask_shape_xy[1] - 1,
-                                                            0, mask_shape_xy[0] - 1, True)
+    circle_a_contains = circle_a.contains_points_unitgrid(0, mask_shape_xy[0] - 1,
+                                                          0, mask_shape_xy[1] - 1, True)
+    circle_b_contains = circle_b.contains_points_unitgrid(0, mask_shape_xy[0] - 1,
+                                                          0, mask_shape_xy[1] - 1, True)
+    rectangle_contains = rectangle.contains_points_unitgrid(0, mask_shape_xy[0] - 1,
+                                                            0, mask_shape_xy[1] - 1, True)
     # Render each in numpy mask-boolean and index conventions:
-    circle_a_mask = np.transpose(np.logical_not(circle_a_contains))
-    circle_b_mask = np.transpose(np.logical_not(circle_b_contains))
-    rectangle_mask = np.transpose(np.logical_not(rectangle_contains))
+    # circle_a_mask = np.transpose(np.logical_not(circle_a_contains))
+    # circle_b_mask = np.transpose(np.logical_not(circle_b_contains))
+    # rectangle_mask = np.transpose(np.logical_not(rectangle_contains))
+    circle_a_mask = np.logical_not(circle_a_contains)
+    circle_b_mask = np.logical_not(circle_b_contains)
+    rectangle_mask = np.logical_not(rectangle_contains)
     mask = np.logical_and(np.logical_and(circle_a_mask, circle_b_mask), rectangle_mask)
     # any_contains = np.logical_or(np.logical_or(circle_a_contains, circle_b_contains), rectangle_contains)
     # mask = np.transpose(np.logical_not(any_contains))

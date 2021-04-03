@@ -62,7 +62,7 @@ class Refcat2:
                 # print('From:', str(ra_spec % 360), str(dec_spec), ' -> ', str(len(df_degsq)), 'rows.')
                 df_list.append(df_degsq)
         df = pd.DataFrame(pd.concat(df_list, ignore_index=True))  # new index of unique integers
-        print('\nRefcat2: begin with', str(len(df)), 'stars.')
+        print('\nRefcat2: begin with', str(len(df)), 'stars before trimming.')
 
         # Trim dataframe based on user's actual limits on RA and Dec:
         ra_too_low = (df['RA_deg'] < ra_deg_range[0]) & (df['RA_deg'] >= ra_spec_first)
@@ -72,6 +72,12 @@ class Refcat2:
         # print(str(sum(ra_too_low)), str(sum(ra_too_high)), str(sum(dec_too_low)), str(sum(dec_too_high)))
         radec_outside_requested = ra_too_low | ra_too_high | dec_too_low | dec_too_high
         df = df[~radec_outside_requested]
+        # print('Refcat2: RA limits=' +
+        #       ' {:.4f}'.format(ra_deg_range[0]) +
+        #       ' {:.4f}'.format(ra_deg_range[1]))
+        # print('Refcat2: Dec limits=' +
+        #       ' {:.4f}'.format(dec_deg_range[0]) +
+        #       ' {:.4f}'.format(dec_deg_range[1]))
         print('Refcat2: RADec-trimmed to', str(len(df)), 'stars.')
 
         # Add columns for synthetic B-V color & synthetic APASS (~Sloan) R magnitude:
@@ -139,14 +145,15 @@ class Refcat2:
         rows_to_keep = [(dgaia > 0) for dgaia in self.df_selected['dG_gaia']]
         self.df_selected = self.df_selected.loc[rows_to_keep, :]
 
-    def remove_overlapping(self):
-        rp1_too_close = pd.Series([False if pd.isnull(rp1) else (rp1 < RP1_LIMIT)
+    def remove_overlapping(self, min_overlap_arcseconds=None):
+        rp1_too_close = pd.Series([False if pd.isnull(rp1)
+                                   else ((min_overlap_arcseconds is None) or (rp1 < min_overlap_arcseconds))
                                    for rp1 in self.df_selected['RP1']])
-        r1_too_close = pd.Series([False if pd.isnull(r1) else (r1 < R1_LIMIT)
-                                  for r1 in self.df_selected['R1']])
-        r10_too_close = pd.Series([False if pd.isnull(r10) else (r10 < R10_LIMIT)
-                                   for r10 in self.df_selected['R10']])
-        is_overlapping = rp1_too_close | r1_too_close | r10_too_close
+        # r1_too_close = pd.Series([False if pd.isnull(r1) else (r1 < R1_LIMIT)
+        #                           for r1 in self.df_selected['R1']])
+        # r10_too_close = pd.Series([False if pd.isnull(r10) else (r10 < R10_LIMIT)
+        #                            for r10 in self.df_selected['R10']])
+        is_overlapping = rp1_too_close
         self.df_selected = self.df_selected.loc[list(~is_overlapping), :].copy()
 
     def update_epoch(self, new_datetime_utc):

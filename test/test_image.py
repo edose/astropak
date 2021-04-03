@@ -628,6 +628,10 @@ def test_calc_background_value():
            image.calc_background_value(im, dilate_size=3.3)
 
 
+def test_temporary_make_pill_mask():
+    mask = image.make_pill_mask((62, 81), (32, 52), (30, 30), 12.6)
+    assert True
+
 _____HELPER_functions_________________________________________________ = 0
 
 
